@@ -17,7 +17,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.json import JSON
 
 from .core import FDAExplorer
-from .config import load_config, get_config
+from .config import load_config, get_config, print_config_validation, ensure_valid_config
 
 
 console = Console()
@@ -27,26 +27,57 @@ console = Console()
 @click.option('--config', '-c', help='Configuration file path')
 @click.option('--debug', '-d', is_flag=True, help='Enable debug mode')
 @click.option('--api-key', help='FDA API key')
+@click.option('--validate-config', is_flag=True, help='Validate configuration and exit')
+@click.option('--skip-validation', is_flag=True, help='Skip startup validation')
 @click.pass_context
-def cli(ctx, config, debug, api_key):
+def cli(ctx, config, debug, api_key, validate_config, skip_validation):
     """Enhanced FDA Explorer CLI - Comprehensive FDA data exploration tool"""
     ctx.ensure_object(dict)
     
-    # Load configuration
-    if config:
-        ctx.obj['config'] = load_config(config)
-    else:
-        ctx.obj['config'] = get_config()
-    
-    # Override API key if provided
-    if api_key:
-        ctx.obj['config'].openfda.api_key = api_key
-    
-    # Set debug mode
-    if debug:
-        ctx.obj['config'].debug = True
-    
-    ctx.obj['explorer'] = None
+    try:
+        # Load configuration with validation (unless skipped)
+        validate_startup = not skip_validation
+        
+        if config:
+            ctx.obj['config'] = load_config(config, validate_startup=validate_startup)
+        else:
+            ctx.obj['config'] = get_config(validate_startup=validate_startup)
+        
+        # Override API key if provided
+        if api_key:
+            ctx.obj['config'].openfda.api_key = api_key
+        
+        # Set debug mode
+        if debug:
+            ctx.obj['config'].debug = True
+        
+        # If validate-config flag is set, print validation and exit
+        if validate_config:
+            console.print("\n[bold blue]Configuration Validation Report[/bold blue]\n")
+            print_config_validation()
+            sys.exit(0)
+        
+        # Show validation warnings if any (but don't fail)
+        if not skip_validation:
+            summary = ctx.obj['config'].get_validation_summary()
+            if summary["warnings"] or summary["info"]:
+                console.print("\n[yellow]Configuration Validation Warnings:[/yellow]")
+                for warning in summary["warnings"]:
+                    console.print(f"  ⚠️  {warning}")
+                for info in summary["info"]:
+                    console.print(f"  ℹ️  {info}")
+                console.print()
+        
+        ctx.obj['explorer'] = None
+        
+    except ValueError as e:
+        console.print(f"\n[red]Configuration Error:[/red] {e}")
+        console.print("\nUse --validate-config to see detailed validation report.")
+        console.print("Use --skip-validation to bypass validation (not recommended).")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"\n[red]Unexpected Error:[/red] {e}")
+        sys.exit(1)
 
 
 @cli.command()
@@ -520,6 +551,71 @@ def _display_trend_analysis(trend_analysis, format_type, output_file):
             table.add_row(period, str(total_records))
         
         console.print(table)
+
+
+@cli.command()
+@click.option('--config', '-c', help='Configuration file path to validate')
+@click.option('--strict', is_flag=True, help='Treat warnings as errors')
+@click.pass_context
+def validate_config(ctx, config, strict):
+    """Validate configuration and display comprehensive report"""
+    try:
+        # Load configuration for validation
+        if config:
+            cfg = load_config(config, validate_startup=False)
+        else:
+            cfg = get_config(validate_startup=False)
+        
+        console.print("\n[bold blue]Configuration Validation Report[/bold blue]\n")
+        
+        # Get validation summary
+        summary = cfg.get_validation_summary()
+        
+        # Display results
+        if summary["critical"]:
+            console.print("[red]🚨 CRITICAL ISSUES:[/red]")
+            for issue in summary["critical"]:
+                console.print(f"  {issue}")
+            console.print()
+        
+        if summary["errors"]:
+            console.print("[red]❌ ERRORS:[/red]")
+            for issue in summary["errors"]:
+                console.print(f"  {issue}")
+            console.print()
+        
+        if summary["warnings"]:
+            console.print("[yellow]⚠️  WARNINGS:[/yellow]")
+            for issue in summary["warnings"]:
+                console.print(f"  {issue}")
+            console.print()
+        
+        if summary["info"]:
+            console.print("[cyan]ℹ️  INFO:[/cyan]")
+            for issue in summary["info"]:
+                console.print(f"  {issue}")
+            console.print()
+        
+        if not any(summary.values()):
+            console.print("[green]✅ Configuration validation passed with no issues![/green]")
+        
+        # Exit with appropriate code
+        has_critical_or_errors = summary["critical"] or summary["errors"]
+        has_warnings = summary["warnings"]
+        
+        if has_critical_or_errors:
+            console.print(f"\n[red]Validation failed with {len(summary['critical']) + len(summary['errors'])} critical issues.[/red]")
+            sys.exit(1)
+        elif strict and has_warnings:
+            console.print(f"\n[yellow]Validation failed in strict mode with {len(summary['warnings'])} warnings.[/yellow]")
+            sys.exit(1)
+        else:
+            console.print(f"\n[green]Validation passed.[/green]")
+            sys.exit(0)
+            
+    except Exception as e:
+        console.print(f"\n[red]Configuration validation failed:[/red] {e}")
+        sys.exit(1)
 
 
 def main():
