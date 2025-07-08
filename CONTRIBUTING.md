@@ -144,6 +144,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ## Code Standards
 
+### Commit Hooks
+
+We enforce that every commit message include an AI agent review sign-off.  A pre-commit commit-msg hook will reject any commit without a `Reviewed-by: <agent>` header.
+
 ### Python Code Style
 
 We enforce strict code quality standards:
