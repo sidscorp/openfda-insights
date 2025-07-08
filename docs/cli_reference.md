@@ -15,11 +15,35 @@ export AI_API_KEY="your_ai_key"  # Optional
 All commands support these global options:
 
 ```bash
---config PATH     Path to configuration file
---verbose, -v     Verbose output
---quiet, -q       Suppress output
---format FORMAT   Output format (json, yaml, table)
---help, -h        Show help message
+--config PATH           Path to configuration file
+--debug, -d             Enable debug mode
+--api-key TEXT          FDA API key (overrides config)
+--validate-config       Validate configuration and exit
+--skip-validation       Skip startup validation (not recommended)
+--verbose, -v           Verbose output
+--quiet, -q             Suppress output
+--format FORMAT         Output format (json, yaml, table)
+--help, -h              Show help message
+```
+
+### Configuration Validation
+
+The CLI includes comprehensive configuration validation to ensure proper setup:
+
+- **Automatic validation**: Configuration is validated on startup by default
+- **Manual validation**: Use `--validate-config` to check configuration without running commands
+- **Skip validation**: Use `--skip-validation` to bypass checks (not recommended for production)
+
+**Examples:**
+```bash
+# Validate configuration and show detailed report
+fda-explorer --validate-config
+
+# Run command with custom config file and validation
+fda-explorer --config custom_config.yaml search "pacemaker"
+
+# Skip validation for debugging (not recommended)
+fda-explorer --skip-validation search "device"
 ```
 
 ## Commands
@@ -302,16 +326,109 @@ fda-explorer serve --host 0.0.0.0 --port 8000 --workers 4
 fda-explorer serve --reload --cors --debug
 ```
 
+### fda-explorer validate-config
+
+Validate configuration and display comprehensive report.
+
+```bash
+fda-explorer validate-config [OPTIONS]
+```
+
+**Options:**
+```bash
+--config FILE          Configuration file path to validate
+--strict              Treat warnings as errors
+```
+
+**Examples:**
+```bash
+# Validate current configuration
+fda-explorer validate-config
+
+# Validate specific config file
+fda-explorer validate-config --config production_config.yaml
+
+# Strict validation (fail on warnings)
+fda-explorer validate-config --strict
+```
+
+**Sample Output:**
+```bash
+Configuration Validation Report
+
+✅ Configuration validation passed with no issues!
+
+# Or with issues:
+⚠️  WARNINGS:
+  WARNING: No API key configured for AI provider 'openai'. AI features will be disabled.
+
+ℹ️  INFO:
+  INFO: FDA API key not configured. Rate limiting may apply.
+
+Validation passed.
+```
+
 ## Configuration
 
 ### Environment Variables
 
+The Enhanced FDA Explorer supports comprehensive environment variable configuration with validation:
+
+#### Core Settings
 ```bash
-FDA_API_KEY              FDA API key (required)
-AI_API_KEY               AI provider API key (optional)
-DATABASE_URL             Database connection string
-REDIS_URL                Redis cache URL
-LOG_LEVEL                Logging level (DEBUG, INFO, WARNING, ERROR)
+ENVIRONMENT              Application environment (development, testing, staging, production)
+DEBUG                    Enable debug mode (true/false)
+```
+
+#### FDA API Configuration
+```bash
+FDA_API_KEY              FDA API key (recommended for higher rate limits)
+FDA_BASE_URL             FDA API base URL (default: https://api.fda.gov/)
+FDA_TIMEOUT              Request timeout in seconds (1-300)
+FDA_MAX_RETRIES          Maximum retry attempts (0-10)
+FDA_RATE_LIMIT_DELAY     Delay between requests in seconds (0.0-10.0)
+```
+
+#### AI Configuration
+```bash
+AI_PROVIDER              AI provider (openai, anthropic, openrouter, huggingface)
+AI_API_KEY               AI provider API key (required for AI features)
+AI_MODEL                 AI model name (e.g., gpt-4, claude-3-sonnet)
+AI_BASE_URL              Custom AI API base URL (optional)
+AI_TEMPERATURE           AI temperature setting (0.0-2.0)
+AI_MAX_TOKENS            Maximum tokens per AI request (1-32000)
+```
+
+#### Database & Cache
+```bash
+DATABASE_URL             Database connection string (sqlite:// or postgresql://)
+CACHE_ENABLED            Enable caching (true/false)
+CACHE_BACKEND            Cache backend (redis, memory, file)
+REDIS_URL                Redis connection URL (required if CACHE_BACKEND=redis)
+CACHE_TTL                Cache time-to-live in seconds (1-86400)
+```
+
+#### Server Configuration
+```bash
+API_HOST                 API server host (default: 0.0.0.0)
+API_PORT                 API server port (1-65535, default: 8000)
+WEBUI_HOST               Web UI host (default: 0.0.0.0)
+WEBUI_PORT               Web UI port (1-65535, default: 8501)
+```
+
+#### Authentication & Security
+```bash
+AUTH_ENABLED             Enable authentication (true/false)
+AUTH_SECRET_KEY          JWT secret key (required if AUTH_ENABLED=true)
+AUTH_ALGORITHM           JWT algorithm (HS256, HS384, HS512, RS256, etc.)
+```
+
+#### Logging & Monitoring
+```bash
+LOG_LEVEL                Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+LOG_FILE                 Log file path (optional)
+MONITORING_ENABLED       Enable monitoring (true/false)
+PROMETHEUS_PORT          Prometheus metrics port (1-65535, default: 9090)
 ```
 
 ### Configuration File
