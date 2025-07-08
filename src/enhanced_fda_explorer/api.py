@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 import uvicorn
 
 from .core import FDAExplorer
-from .config import get_config
+from .config import get_config, ensure_valid_config
 from .models import SearchRequest, SearchResponse
 from .auth import AuthManager
 
@@ -70,17 +70,29 @@ async def lifespan(app: FastAPI):
     global explorer
     
     # Startup
-    config = get_config()
-    explorer = FDAExplorer(config)
     logger = logging.getLogger(__name__)
-    logger.info("Enhanced FDA Explorer API started")
+    logger.info("Starting Enhanced FDA Explorer API...")
     
-    yield
+    try:
+        # Validate configuration at startup
+        config = ensure_valid_config()
+        logger.info("Configuration validation passed")
+        
+        # Initialize explorer
+        explorer = FDAExplorer(config)
+        logger.info("Enhanced FDA Explorer API started successfully")
+        
+        yield
+        
+    except Exception as e:
+        logger.error(f"Failed to start API: {e}")
+        raise
     
-    # Shutdown
-    if explorer:
-        explorer.close()
-    logger.info("Enhanced FDA Explorer API stopped")
+    finally:
+        # Shutdown
+        if explorer:
+            await explorer.close()
+        logger.info("Enhanced FDA Explorer API stopped")
 
 
 def create_app() -> FastAPI:
@@ -403,17 +415,33 @@ def create_app() -> FastAPI:
 
 
 def run_api_server():
-    """Run the API server"""
-    config = get_config()
-    
-    uvicorn.run(
-        "enhanced_fda_explorer.api:create_app",
-        host=config.api.host,
-        port=config.api.port,
-        reload=config.api.debug,
-        factory=True,
-        log_level="info"
-    )
+    """Run the API server with configuration validation"""
+    try:
+        # Ensure configuration is valid before starting server
+        config = ensure_valid_config()
+        
+        print(f"Starting Enhanced FDA Explorer API server...")
+        print(f"Host: {config.api.host}")
+        print(f"Port: {config.api.port}")
+        print(f"Debug mode: {config.api.debug}")
+        print(f"Environment: {config.environment}")
+        
+        uvicorn.run(
+            "enhanced_fda_explorer.api:create_app",
+            host=config.api.host,
+            port=config.api.port,
+            reload=config.api.debug,
+            factory=True,
+            log_level="debug" if config.debug else "info"
+        )
+        
+    except ValueError as e:
+        print(f"Configuration validation failed: {e}")
+        print("Please fix configuration issues before starting the server.")
+        return 1
+    except Exception as e:
+        print(f"Failed to start server: {e}")
+        return 1
 
 
 if __name__ == "__main__":

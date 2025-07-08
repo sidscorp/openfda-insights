@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import json
 
 from .core import FDAExplorer
-from .config import get_config, load_config
+from .config import get_config, load_config, validate_current_config
 from .visualization import DataVisualizer
 
 
@@ -101,6 +101,33 @@ def main():
     # Header
     st.title("🔍 Enhanced FDA Explorer")
     st.markdown("### Next-generation FDA medical device data exploration platform")
+    
+    # Configuration validation check
+    try:
+        validation_summary = validate_current_config()
+        
+        # Show configuration warnings if any
+        if validation_summary["errors"] or validation_summary["critical"]:
+            st.error("⚠️ **Configuration Issues Detected**")
+            
+            all_issues = validation_summary["critical"] + validation_summary["errors"]
+            for issue in all_issues:
+                st.error(f"• {issue}")
+            
+            st.info("Please fix configuration issues for optimal performance. Some features may be unavailable.")
+        
+        elif validation_summary["warnings"]:
+            with st.expander("⚠️ Configuration Warnings", expanded=False):
+                for warning in validation_summary["warnings"]:
+                    st.warning(f"• {warning}")
+        
+        elif validation_summary["info"]:
+            with st.expander("ℹ️ Configuration Info", expanded=False):
+                for info in validation_summary["info"]:
+                    st.info(f"• {info}")
+                    
+    except Exception as e:
+        st.error(f"Configuration validation failed: {e}")
     
     # Disclaimer
     st.error("""
