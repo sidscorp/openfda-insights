@@ -58,3 +58,9 @@ repos:
         language: python
         stages: [commit-msg]
         pass_filenames: false
+        - id: require-ai-review
+          name: Require AI review approval
+          entry: scripts/require_ai_review.sh
+          language: script
+          stages: [commit-msg]
+          pass_filenames: false
