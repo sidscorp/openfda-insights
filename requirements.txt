@@ -1,0 +1,65 @@
+# Core dependencies
+requests>=2.31.0
+pandas>=2.0.0
+numpy>=1.24.0
+pydantic>=2.0.0
+python-dateutil>=2.8.0
+
+# Web framework
+fastapi>=0.104.0
+uvicorn>=0.24.0
+streamlit>=1.28.0
+jinja2>=3.1.0
+
+# AI/ML
+openai>=1.0.0
+langchain>=0.0.300
+tiktoken>=0.5.0
+
+# Data processing
+pydantic>=2.0.0
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+
+# Caching and storage
+redis>=5.0.0
+python-multipart>=0.0.6
+
+# Authentication and security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+
+# Configuration and logging
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+structlog>=23.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+httpx>=0.25.0
+
+# Development
+black>=23.0.0
+flake8>=6.1.0
+mypy>=1.6.0
+pre-commit>=3.5.0
+
+# CLI
+click>=8.1.0
+rich>=13.0.0
+typer>=0.9.0
+
+# Monitoring and observability
+prometheus-client>=0.17.0
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-instrumentation-requests>=0.41b0
+
+# Deployment
+docker>=6.1.0
+kubernetes>=28.0.0
+gunicorn>=21.0.0

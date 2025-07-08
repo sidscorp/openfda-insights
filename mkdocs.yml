@@ -1,0 +1,86 @@
+site_name: Enhanced FDA Explorer
+site_description: Next-generation FDA medical device data exploration platform
+site_url: https://siddnambiar.github.io/enhanced-fda-explorer/
+repo_url: https://github.com/siddnambiar/enhanced-fda-explorer
+repo_name: enhanced-fda-explorer
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Palette toggle for dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+
+nav:
+  - Home: README.md
+  - Getting Started:
+    - Quick Start: QUICK_TEST_GUIDE.md
+    - Installation: installation.md
+  - Documentation:
+    - Roadmap: docs/ROADMAP.md
+    - Policy Summary: docs/POLICY_SCIENTIST_SUMMARY.md
+    - Testing: TESTING.md
+    - Task Management: docs/task_management.md
+  - API Reference:
+    - CLI Reference: docs/cli_reference.md
+    - Python SDK: docs/sdk_reference.md
+    - REST API: docs/api_reference.md
+  - Development:
+    - Contributing: CONTRIBUTING.md
+    - Architecture: docs/architecture.md
+    - Development Setup: docs/development.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.mark
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.tilde
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - tables
+  - footnotes
+  - md_in_html
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/siddnambiar/enhanced-fda-explorer
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/enhanced-fda-explorer/
+  version:
+    provider: mike

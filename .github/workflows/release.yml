@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  # Create GitHub release
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      tag_name: ${{ steps.get_version.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Get version from tag
+        id: get_version
+        run: |
+          echo "tag_name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Simple changelog generation from commits
+          if git tag --sort=-creatordate | head -2 | tail -1 > /dev/null 2>&1; then
+            PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1)
+            echo "## Changes since $PREV_TAG" > CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> CHANGELOG.md
+          else
+            echo "## Initial Release" > CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" >> CHANGELOG.md
+          fi
+          
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.tag_name }}
+          release_name: Enhanced FDA Explorer ${{ steps.get_version.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.tag_name, '-') }}
+
+  # Build and publish Python package
+  pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+          
+      - name: Build package
+        run: |
+          python -m build
+          
+      - name: Check package
+        run: |
+          twine check dist/*
+          
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          twine upload dist/*
+
+  # Build and push Docker image
+  docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ secrets.DOCKER_USERNAME }}/enhanced-fda-explorer
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Update documentation
+  docs:
+    name: Update Documentation
+    runs-on: ubuntu-latest
+    needs: release
+    if: github.repository == 'siddnambiar/enhanced-fda-explorer'  # Only run on main repo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs mkdocs-material mkdocstrings
+          pip install -e .
+          
+      - name: Build documentation
+        run: |
+          mkdocs build
+          
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+
+  # Notify completion
+  notify:
+    name: Notify Release Completion
+    runs-on: ubuntu-latest
+    needs: [release, pypi, docker, docs]
+    if: always()
+    steps:
+      - name: Notify success
+        if: needs.release.result == 'success' && needs.pypi.result == 'success'
+        run: |
+          echo "✅ Release ${{ needs.release.outputs.tag_name }} completed successfully!"
+          echo "- PyPI: https://pypi.org/project/enhanced-fda-explorer/"
+          echo "- Docker: https://hub.docker.com/r/${{ secrets.DOCKER_USERNAME }}/enhanced-fda-explorer"
+          echo "- Docs: https://${{ github.repository_owner }}.github.io/enhanced-fda-explorer/"
+          
+      - name: Notify failure
+        if: needs.release.result == 'failure' || needs.pypi.result == 'failure'
+        run: |
+          echo "❌ Release ${{ needs.release.outputs.tag_name }} failed!"
+          echo "Check the workflow logs for details."
