@@ -22,7 +22,7 @@ tasks:
   - id: P1-T002
     title: "Write end-to-end mock tests for CLI commands"
     description: "Add comprehensive unit tests for CLI argument validation and edge cases"
-    status: todo
+    status: completed
     priority: P1
     category: testing
     labels: [testing, cli, unit-tests]
@@ -32,7 +32,7 @@ tasks:
   - id: P1-T003
     title: "Implement API rate-limit instrumentation"
     description: "Add metrics and monitoring for OpenFDA client backoff and error handling"
-    status: todo
+    status: completed
     priority: P1
     category: monitoring
     labels: [api, monitoring, performance]
@@ -52,7 +52,7 @@ tasks:
   - id: P1-T005
     title: "Improve CLI help and UX polish"
     description: "Add real examples and interactive prompts when keys are missing"
-    status: todo
+    status: completed
     priority: P1
     category: ux
     labels: [cli, ux, help]
@@ -62,7 +62,7 @@ tasks:
   - id: P1-T018
     title: "Evaluate & select LLM frameworks for orchestrator"
     description: "Assess OpenAI, OpenRouter, Anthropic, and HuggingFace smolagents for Phase 1 conversational orchestrator integration"
-    status: todo
+    status: completed
     priority: P1
     category: orchestrator
     labels: [orchestrator, ai, evaluation]
