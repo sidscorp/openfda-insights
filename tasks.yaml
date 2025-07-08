@@ -12,7 +12,7 @@ tasks:
   - id: P1-T001
     title: "Add Pydantic BaseSettings for config validation"
     description: "Enforce schema validation for all environment variables and config keys at startup"
-    status: todo
+    status: completed
     priority: P1
     category: config
     labels: [config, validation, pydantic]
