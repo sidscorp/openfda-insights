@@ -1,28 +1,28 @@
 # Enhanced FDA Explorer
 
-Next-generation FDA medical device data exploration platform that combines production-ready reliability with AI-powered analysis.
+**⚠️ DEVELOPMENT STATUS: This project is actively under development. Core functionality works but features are being added and refined. Questions or want to collaborate? Contact [Dr. Sidd Nambiar](https://github.com/siddnambiar).**
+
+A tool for exploring FDA medical device data with optional AI analysis.
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 
-## 🚀 Features
+## Features
 
 ### Core Capabilities
-- **🔍 Comprehensive Data Access**: Reliable access to all 6 FDA medical device databases
-- **🤖 AI-Powered Analysis**: Intelligent analysis with domain expertise and risk scoring
-- **🌐 Multi-Interface Support**: Web UI, REST API, Python SDK, and CLI tool
-- **📊 Advanced Visualizations**: Interactive charts, timeline visualizations, and risk heatmaps
-- **⚡ High Performance**: Production-ready with 99.9% query success rate
+- Access to FDA medical device databases (device events, recalls, 510k clearances, PMA approvals, classifications, UDI)
+- Optional AI analysis for risk scoring and insights
+- Multiple interfaces: Web UI (Streamlit), REST API, Python SDK, CLI tool
+- Basic visualizations and data export
 
-### Advanced Features
-- **🔐 Enterprise Security**: Authentication, RBAC, and audit logging
-- **📈 Trend Analysis**: Historical trend analysis across multiple time periods
-- **⚖️ Device Comparison**: Side-by-side comparison of medical devices
-- **🏭 Manufacturer Intelligence**: Comprehensive manufacturer analysis
-- **📋 Regulatory Timeline**: Automated regulatory milestone tracking
+### Additional Features
+- Caching for improved performance
+- Device comparison functionality
+- Manufacturer analysis
+- Configuration management
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 Enhanced FDA Explorer
@@ -45,7 +45,7 @@ Enhanced FDA Explorer
     └── Deployment (Docker/Kubernetes)
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -56,15 +56,12 @@ cd enhanced-fda-explorer
 
 # Install the package
 pip install -e .
-
-# Or install from PyPI (when published)
-pip install enhanced-fda-explorer
 ```
 
 ### Configuration
 
 ```bash
-# Copy environment template
+# Copy environment template (if it exists)
 cp .env.example .env
 
 # Edit configuration
@@ -172,36 +169,29 @@ fda-explorer web
 # Navigate to http://localhost:8501
 ```
 
-## 📊 Data Sources
+## Data Sources
 
-The Enhanced FDA Explorer integrates data from all major FDA medical device databases:
+Accesses FDA medical device databases via the OpenFDA API:
 
-| Database | Description | Records |
-|----------|-------------|---------|
-| **Device Events** | Adverse event reports | 15M+ |
-| **Device Recalls** | Product recall information | 30K+ |
-| **510(k) Clearances** | Premarket notifications | 200K+ |
-| **PMA Approvals** | Premarket approvals | 15K+ |
-| **Device Classifications** | Device classification database | 7K+ |
-| **UDI Database** | Unique device identifier records | 2M+ |
+| Database | Description |
+|----------|-------------|
+| Device Events | Adverse event reports |
+| Device Recalls | Product recall information |
+| 510(k) Clearances | Premarket notifications |
+| PMA Approvals | Premarket approvals |
+| Device Classifications | Device classification database |
+| UDI Database | Unique device identifier records |
 
-## 🤖 AI Analysis
+## AI Analysis
 
-The AI analysis engine provides:
+Optional AI analysis features:
 
-- **Risk Assessment**: Automated risk scoring based on regulatory data
-- **Trend Analysis**: Pattern recognition across time periods
-- **Regulatory Timeline**: Automated milestone tracking
-- **Comparative Analysis**: Multi-device comparison with insights
-- **Predictive Insights**: Early warning indicators
+- Risk assessment based on regulatory data
+- Basic trend analysis
+- Device comparison with insights
+- Configurable AI providers (OpenAI, Anthropic, OpenRouter)
 
-### Supported AI Providers
-
-- **OpenAI** (GPT-4, GPT-3.5-turbo)
-- **OpenRouter** (Multiple models)
-- **Anthropic** (Claude)
-
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -249,7 +239,7 @@ ai:
 # ... additional configuration
 ```
 
-## 🚀 Deployment
+## Deployment
 
 ### Docker
 
@@ -296,38 +286,8 @@ services:
       POSTGRES_PASSWORD: password
 ```
 
-### Kubernetes
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: enhanced-fda-explorer
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: fda-explorer
-  template:
-    metadata:
-      labels:
-        app: fda-explorer
-    spec:
-      containers:
-      - name: fda-explorer
-        image: enhanced-fda-explorer:latest
-        ports:
-        - containerPort: 8000
-        - containerPort: 8501
-        env:
-        - name: FDA_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: fda-secrets
-              key: fda-api-key
-```
-
-## 📝 API Documentation
+## API Documentation
 
 Once the API server is running, visit:
 
@@ -346,7 +306,7 @@ Once the API server is running, visit:
 | `/manufacturer/{name}/intelligence` | GET | Get manufacturer intelligence |
 | `/regulatory/insights` | GET | Get regulatory insights |
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run tests
@@ -361,23 +321,7 @@ pytest tests/test_ai.py
 pytest tests/test_client.py
 ```
 
-## 📈 Performance
-
-- **Query Success Rate**: 99.9%
-- **Response Time**: <5 seconds for 90% of queries
-- **Throughput**: 1000+ requests/minute
-- **Uptime**: 99.9% availability
-- **Data Coverage**: 500-1200+ records per query vs. 20-100 in basic implementations
-
-## 🔒 Security
-
-- **Input Validation**: Comprehensive XSS/SQL injection prevention
-- **Authentication**: JWT-based authentication with RBAC
-- **Rate Limiting**: Configurable rate limiting and throttling
-- **Audit Logging**: Comprehensive audit trail
-- **Data Privacy**: Sensitive data filtering and encryption
-
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
