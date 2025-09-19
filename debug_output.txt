@@ -1,0 +1,477 @@
+Debug mode enabled
+DEBUG:asyncio:Using selector: EpollSelector
+DEBUG:openai._base_client:Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-12914cf3-d56d-47f7-b87e-677647c40d34', 'json_data': {'messages': [{'content': 'You are an expert at understanding medical device queries.', 'role': 'system'}, {'content': 'Analyze this medical device query for implicit intent and concerns.\n        \n        Query: "Medtronic"\n        Identified entities: Manufacturers: Medtronic\n        Query type: manufacturer\n        \n        Provide:\n        1. primary_intent: The main goal (search/analyze/compare/investigate/monitor/profile)\n        2. implicit_concerns: List of concerns not explicitly stated but likely relevant\n        3. time_sensitivity: How time-sensitive is this (immediate/recent/historical/ongoing)\n        \n        For manufacturer queries, consider: company reputation, product portfolio, safety record\n        For device queries, consider: safety, effectiveness, regulatory status\n        For brand queries, consider: specific model performance, recalls, comparisons\n        \n        Output as JSON.', 'role': 'user'}], 'model': 'openai/gpt-3.5-turbo', 'stream': False, 'temperature': 0.3}}
+DEBUG:openai._base_client:Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+DEBUG:httpcore.connection:connect_tcp.started host='openrouter.ai' port=443 local_address=None timeout=None socket_options=None
+DEBUG:httpcore.connection:connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x740f5d94e630>
+DEBUG:httpcore.connection:start_tls.started ssl_context=<ssl.SSLContext object at 0x740f5dad73d0> server_hostname='openrouter.ai' timeout=None
+DEBUG:httpcore.connection:start_tls.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x740f5dae32c0>
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Fri, 19 Sep 2025 16:52:53 GMT'), (b'Content-Type', b'application/json'), (b'Transfer-Encoding', b'chunked'), (b'Connection', b'keep-alive'), (b'Content-Encoding', b'gzip'), (b'Access-Control-Allow-Origin', b'*'), (b'Vary', b'Accept-Encoding'), (b'Permissions-Policy', b'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")'), (b'Referrer-Policy', b'no-referrer, strict-origin-when-cross-origin'), (b'X-Content-Type-Options', b'nosniff'), (b'Server', b'cloudflare'), (b'CF-RAY', b'981a98976c4557b2-IAD')])
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:openai._base_client:HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Fri, 19 Sep 2025 16:52:53 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer-policy': 'no-referrer, strict-origin-when-cross-origin', 'x-content-type-options': 'nosniff', 'server': 'cloudflare', 'cf-ray': '981a98976c4557b2-IAD'})
+DEBUG:openai._base_client:request_id: None
+INFO:enhanced_fda_explorer.agents_v2:Fetching batch: skip=0, strategy=manufacturer_search
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/event.json?search=%28device.manufacturer_d_name%3AMedtronic+OR+device.manufacturer_d_country%3AMedtronic+OR+device.manufacturer_d_name%3AMEDTRONIC+OR+device.manufacturer_d_country%3AMEDTRONIC+OR+device.manufacturer_d_name%3Amedtronic+OR+device.manufacturer_d_country%3Amedtronic%29+AND+date_received%3A%5B20240924+TO+20250919%5D&limit=100&skip=0&sort=date_received%3Adesc&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.agents_v2:Found 278138 total events with manufacturer_search strategy
+INFO:enhanced_fda_explorer.agents_v2:Fetching batch: skip=100, strategy=manufacturer_search
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/event.json?search=%28device.manufacturer_d_name%3AMedtronic+OR+device.manufacturer_d_country%3AMedtronic+OR+device.manufacturer_d_name%3AMEDTRONIC+OR+device.manufacturer_d_country%3AMEDTRONIC+OR+device.manufacturer_d_name%3Amedtronic+OR+device.manufacturer_d_country%3Amedtronic%29+AND+date_received%3A%5B20240924+TO+20250919%5D&limit=100&skip=100&sort=date_received%3Adesc&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.agents_v2:Fetching batch: skip=200, strategy=manufacturer_search
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/event.json?search=%28device.manufacturer_d_name%3AMedtronic+OR+device.manufacturer_d_country%3AMedtronic+OR+device.manufacturer_d_name%3AMEDTRONIC+OR+device.manufacturer_d_country%3AMEDTRONIC+OR+device.manufacturer_d_name%3Amedtronic+OR+device.manufacturer_d_country%3Amedtronic%29+AND+date_received%3A%5B20240924+TO+20250919%5D&limit=100&skip=200&sort=date_received%3Adesc&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.agents_v2:Fetching batch: skip=300, strategy=manufacturer_search
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/event.json?search=%28device.manufacturer_d_name%3AMedtronic+OR+device.manufacturer_d_country%3AMedtronic+OR+device.manufacturer_d_name%3AMEDTRONIC+OR+device.manufacturer_d_country%3AMEDTRONIC+OR+device.manufacturer_d_name%3Amedtronic+OR+device.manufacturer_d_country%3Amedtronic%29+AND+date_received%3A%5B20240924+TO+20250919%5D&limit=100&skip=300&sort=date_received%3Adesc&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.agents_v2:Fetching batch: skip=400, strategy=manufacturer_search
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/event.json?search=%28device.manufacturer_d_name%3AMedtronic+OR+device.manufacturer_d_country%3AMedtronic+OR+device.manufacturer_d_name%3AMEDTRONIC+OR+device.manufacturer_d_country%3AMEDTRONIC+OR+device.manufacturer_d_name%3Amedtronic+OR+device.manufacturer_d_country%3Amedtronic%29+AND+date_received%3A%5B20240924+TO+20250919%5D&limit=100&skip=400&sort=date_received%3Adesc&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.agents_v2:Fetched 500 events out of 278138 total
+DEBUG:openai._base_client:Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-0062b975-2061-471e-aaed-39cdf29c0e99', 'json_data': {'messages': [{'content': 'You are a specialist agent for FDA adverse event reports.\n        Your expertise includes:\n        - Analyzing device adverse events (deaths, injuries, malfunctions)\n        - Identifying patterns in event data\n        - Assessing severity and frequency of events\n        - Understanding patient outcomes and device problems\n        \n        When analyzing data:\n        1. Focus on event types and their frequencies\n        2. Identify serious events (deaths, injuries)\n        3. Look for patterns in manufacturers or device models\n        4. Assess temporal trends\n        5. Cite specific FDA records for key findings\n        \n        Output your analysis as JSON with key_findings, data_citations, and recommendations.\n        Each finding must reference specific FDA record IDs.\n        ', 'role': 'system'}, {'content': '\n            Analyze these FDA adverse event data for Medtronic:\n            \n            Total events: 278138\n            Event types breakdown: {\n  "Malfunction": 266,\n  "Injury": 226,\n  "Death": 8\n}\n            Top manufacturers: [\n  [\n    "MEDTRONIC PUERTO RICO VILLALBA",\n    196\n  ],\n  [\n    "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n    81\n  ],\n  [\n    "MEDTRONIC SINGAPORE OPERATIONS",\n    45\n  ],\n  [\n    "MEDTRONIC IRELAND",\n    32\n  ],\n  [\n    "MEDTRONIC NEUROMODULATION",\n    24\n  ]\n]\n            Recent serious events: [\n  {\n    "type": "Injury",\n    "date": "20240214",\n    "description": "",\n    "manufacturer": "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n    "mdr_report_key": "22920201",\n    "report_number": "3004209178-2025-14641"\n  },\n  {\n    "type": "Injury",\n    "date": "20250811",\n    "description": "",\n    "manufacturer": "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n    "mdr_report_key": "22920233",\n    "report_number": "3004209178-2025-14642"\n  },\n  {\n    "type": "Injury",\n    "date": "20250615",\n    "description": "",\n    "manufacturer": "MEDTRONIC IRELAND",\n    "mdr_report_key": "22920442",\n    "report_number": "9612164-2025-04265"\n  },\n  {\n    "type": "Injury",\n    "date": "20250620",\n    "description": "",\n    "manufacturer": "MEDTRONIC IRELAND",\n    "mdr_report_key": "22920479",\n    "report_number": "9612164-2025-04266"\n  },\n  {\n    "type": "Injury",\n    "date": "20250605",\n    "description": "",\n    "manufacturer": "MEDTRONIC IRELAND",\n    "mdr_report_key": "22920481",\n    "report_number": "9612164-2025-04267"\n  },\n  {\n    "type": "Injury",\n    "date": "20250522",\n    "description": "",\n    "manufacturer": "MEDTRONIC IRELAND",\n    "mdr_report_key": "22920483",\n    "report_number": "9612164-2025-04268"\n  },\n  {\n    "type": "Injury",\n    "date": "20250828",\n    "description": "",\n    "manufacturer": "MEDTRONIC MEXICO",\n    "mdr_report_key": "22920485",\n    "report_number": "9612164-2025-04269"\n  },\n  {\n    "type": "Injury",\n    "date": "20250624",\n    "description": "",\n    "manufacturer": "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n    "mdr_report_key": "22920494",\n    "report_number": "3004209178-2025-14644"\n  },\n  {\n    "type": "Injury",\n    "date": "20250809",\n    "description": "",\n    "manufacturer": "MEDTRONIC PUERTO RICO VILLALBA",\n    "mdr_report_key": "22920495",\n    "report_number": "2649622-2025-23683"\n  },\n  {\n    "type": "Injury",\n    "date": "20230317",\n    "description": "",\n    "manufacturer": "MEDTRONIC PUERTO RICO VILLALBA",\n    "mdr_report_key": "22920506",\n    "report_number": "2649622-2025-23684"\n  }\n]\n            \n            Provide analysis focusing on factual patterns observed.\n            Remember to cite specific FDA records when making claims.\n            ', 'role': 'user'}], 'model': 'openai/gpt-3.5-turbo', 'stream': False, 'temperature': 0.3}}
+DEBUG:openai._base_client:Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Fri, 19 Sep 2025 16:52:57 GMT'), (b'Content-Type', b'application/json'), (b'Transfer-Encoding', b'chunked'), (b'Connection', b'keep-alive'), (b'Content-Encoding', b'gzip'), (b'Access-Control-Allow-Origin', b'*'), (b'Vary', b'Accept-Encoding'), (b'Permissions-Policy', b'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")'), (b'Referrer-Policy', b'no-referrer, strict-origin-when-cross-origin'), (b'X-Content-Type-Options', b'nosniff'), (b'Server', b'cloudflare'), (b'CF-RAY', b'981a98b3491857b2-IAD')])
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:openai._base_client:HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Fri, 19 Sep 2025 16:52:57 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer-policy': 'no-referrer, strict-origin-when-cross-origin', 'x-content-type-options': 'nosniff', 'server': 'cloudflare', 'cf-ray': '981a98b3491857b2-IAD'})
+DEBUG:openai._base_client:request_id: None
+INFO:enhanced_fda_explorer.agents_v2:Recalls: Fetching batch skip=0, strategy=manufacturer_search
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/recall.json?search=%28recalling_firm%3AMedtronic+OR+firm_fei_number%3AMedtronic+OR+recalling_firm%3AMEDTRONIC+OR+firm_fei_number%3AMEDTRONIC+OR+recalling_firm%3Amedtronic+OR+firm_fei_number%3Amedtronic%29+AND+event_date_initiated%3A%5B20240924+TO+20250919%5D&limit=100&skip=0&sort=event_date_initiated%3Adesc&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.agents_v2:Found 41 total recalls with manufacturer_search strategy
+INFO:enhanced_fda_explorer.agents_v2:Fetched 41 recalls out of 41 total
+DEBUG:openai._base_client:Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-801e418d-69a0-4001-8cf7-519b788472cf', 'json_data': {'messages': [{'content': 'You are a specialist agent for FDA device recalls.\n        Your expertise includes:\n        - Analyzing recall classifications (Class I, II, III)\n        - Understanding recall reasons and root causes\n        - Assessing recall scope and impact\n        - Tracking recall effectiveness\n        \n        Focus on:\n        1. Recall severity and classification\n        2. Reasons for recalls\n        3. Number of units affected\n        4. Recall status and effectiveness\n        5. Patterns in recall causes\n        \n        Output your analysis as JSON with key_findings, data_citations, and recommendations.\n        Each finding must reference specific FDA recall numbers.\n        ', 'role': 'system'}, {'content': '\n            Analyze these FDA recall data for Medtronic:\n            \n            Total recalls: 41\n            By classification: {\n  "Unknown": 41\n}\n            Recent recalls: [\n  {\n    "date": "2025-08-06",\n    "classification": "Unknown",\n    "reason": "The catheters may not retain their shape.",\n    "status": "Open, Classified",\n    "distribution": "Worldwide - US Nationwide distribution.",\n    "recall_number": "Z-2480-2025",\n    "firm_fei_number": ""\n  },\n  {\n    "date": "2025-08-06",\n    "classification": "Unknown",\n    "reason": "The catheters may not retain their shape.",\n    "status": "Open, Classified",\n    "distribution": "Worldwide - US Nationwide distribution.",\n    "recall_number": "Z-2481-2025",\n    "firm_fei_number": ""\n  },\n  {\n    "date": "2025-08-06",\n    "classification": "Unknown",\n    "reason": "The catheters may not retain their shape.",\n    "status": "Open, Classified",\n    "distribution": "Worldwide - US Nationwide distribution.",\n    "recall_number": "Z-2482-2025",\n    "firm_fei_number": ""\n  },\n  {\n    "date": "2025-07-17",\n    "classification": "Unknown",\n    "reason": "Due to out of the box wobble of the driver.",\n    "status": "Open, Classified",\n    "distribution": "U.S.: AZ, CA, CO, CT, FL, GA, IA, IL, IN, LA, MI, MN, MO, MS, NC, ND, NE, NJ, NV, NY, OH, OR, SC, TN, TX, \\n\\nO.U.S.: Canada, China, Croatia, France, Germany, India, Italy, Japan, Jordan, Kuwait, Norway, Romania, South Korea, Spain, Sweden, Switzerland, Turkey, United Arab Emirates, and United Kingdom",\n    "recall_number": "Z-2461-2025",\n    "firm_fei_number": ""\n  },\n  {\n    "date": "2025-06-18",\n    "classification": "Unknown",\n    "reason": "In prior SmartSync application versions, the Abort button stopped the test that was selected. During",\n    "status": "Open, Classified",\n    "distribution": "Worldwide - US Nationwide distribution.",\n    "recall_number": "Z-2168-2025",\n    "firm_fei_number": ""\n  }\n]\n            Common reasons: [\n  [\n    "All Medtronic MiniMed pumps (Paradigm series, Minimed 530G, 6XX series, and 7XX series) were found t",\n    12\n  ],\n  [\n    "Software issues were identified in application version 2.x.",\n    4\n  ],\n  [\n    "The catheters may not retain their shape.",\n    3\n  ],\n  [\n    "Incorrect labeling for seven manufactured lots of certain models of Arterial Cannulae.",\n    3\n  ],\n  [\n    "In prior SmartSync application versions, the Abort button stopped the test that was selected. During",\n    2\n  ]\n]\n            \n            Provide factual assessment of recall patterns.\n            Remember to reference specific FDA recall numbers.\n            ', 'role': 'user'}], 'model': 'openai/gpt-3.5-turbo', 'stream': False, 'temperature': 0.3}}
+DEBUG:openai._base_client:Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Fri, 19 Sep 2025 16:53:08 GMT'), (b'Content-Type', b'application/json'), (b'Transfer-Encoding', b'chunked'), (b'Connection', b'keep-alive'), (b'Content-Encoding', b'gzip'), (b'Access-Control-Allow-Origin', b'*'), (b'Vary', b'Accept-Encoding'), (b'Permissions-Policy', b'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")'), (b'Referrer-Policy', b'no-referrer, strict-origin-when-cross-origin'), (b'X-Content-Type-Options', b'nosniff'), (b'Server', b'cloudflare'), (b'CF-RAY', b'981a98f5db4557b2-IAD')])
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:openai._base_client:HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Fri, 19 Sep 2025 16:53:08 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer-policy': 'no-referrer, strict-origin-when-cross-origin', 'x-content-type-options': 'nosniff', 'server': 'cloudflare', 'cf-ray': '981a98f5db4557b2-IAD'})
+DEBUG:openai._base_client:request_id: None
+INFO:enhanced_fda_explorer.specialist_agents:Clearances: Fetching batch skip=0, search_type=manufacturer
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/510k.json?search=applicant%3AMedtronic+AND+date_received%3A%5B20240924+TO+20250919%5D&limit=100&skip=0&sort=date_received%3Adesc&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.specialist_agents:Found 18 total clearances for manufacturer: Medtronic
+INFO:enhanced_fda_explorer.specialist_agents:Fetched 18 clearances out of 18 total
+DEBUG:openai._base_client:Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-788f0713-3be2-4c25-a7b6-a48955b8a05a', 'json_data': {'messages': [{'content': 'You are a specialist agent for FDA 510(k) clearances.\n        Your expertise includes:\n        - Analyzing regulatory clearance pathways\n        - Understanding substantial equivalence determinations\n        - Tracking clearance timelines and trends\n        - Identifying predicate devices\n        - Assessing regulatory compliance\n        \n        Focus on:\n        1. Clearance dates and timelines\n        2. Predicate device relationships\n        3. Applicant/manufacturer patterns\n        4. Product codes and classifications\n        5. Clearance statement summaries\n        \n        Output your analysis as JSON with key_findings, risk_indicators, and recommendations.\n        ', 'role': 'system'}, {'content': "\n            Analyze these FDA 510(k) clearance data for Medtronic:\n            \n            Total clearances: 18\n            Recent clearances: 18\n            Top applicants: [('Medtronic Sofamor Danek USA, Inc.', 3), ('Medtronic, Inc.', 3), ('Medtronic Sofamor Danek, Inc.', 2), ('Medtronic Inc', 2), ('Medicrea International S.A.S. (Medtronic)', 1)]\n            Product codes: [('1000306431', 12), ('1220477', 11), ('2183744', 10), ('3008114965', 9), ('1450662', 9)]\n            \n            Recent clearance details:\n            [{'k_number': 'K251629', 'date': '2025-05-28', 'applicant': 'Medicrea International S.A.S. (Medtronic)', 'device_name': 'UNiD\\x99 Spine Analyzer', 'decision': '', 'statement': 'Summary'}, {'k_number': 'K251444', 'date': '2025-05-09', 'applicant': 'Medtronic Sofamor Danek USA, Inc.', 'device_name': 'Endoskeleton\\x99 Interbody Systems', 'decision': '', 'statement': 'Summary'}, {'k_number': 'K251395', 'date': '2025-05-05', 'applicant': 'Medtronic Sofamor Danek USA, Inc.', 'device_name': 'The Rialto\\x99 SI Fusion System', 'decision': '', 'statement': 'Summary'}]\n            \n            Assess the regulatory pathway and clearance patterns.\n            ", 'role': 'user'}], 'model': 'openai/gpt-3.5-turbo', 'stream': False, 'temperature': 0.3}}
+DEBUG:openai._base_client:Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Fri, 19 Sep 2025 16:53:13 GMT'), (b'Content-Type', b'application/json'), (b'Transfer-Encoding', b'chunked'), (b'Connection', b'keep-alive'), (b'Content-Encoding', b'gzip'), (b'Access-Control-Allow-Origin', b'*'), (b'Vary', b'Accept-Encoding'), (b'Permissions-Policy', b'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")'), (b'Referrer-Policy', b'no-referrer, strict-origin-when-cross-origin'), (b'X-Content-Type-Options', b'nosniff'), (b'Server', b'cloudflare'), (b'CF-RAY', b'981a9914dab257b2-IAD')])
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:openai._base_client:HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Fri, 19 Sep 2025 16:53:13 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer-policy': 'no-referrer, strict-origin-when-cross-origin', 'x-content-type-options': 'nosniff', 'server': 'cloudflare', 'cf-ray': '981a9914dab257b2-IAD'})
+DEBUG:openai._base_client:request_id: None
+INFO:enhanced_fda_explorer.specialist_agents:UDI: Fetching batch skip=0, search_type=manufacturer
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/udi.json?search=company_name%3AMedtronic&limit=100&skip=0&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.specialist_agents:Found 80279 total UDI records for manufacturer: Medtronic
+INFO:enhanced_fda_explorer.specialist_agents:UDI: Fetching batch skip=100, search_type=manufacturer
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/udi.json?search=company_name%3AMedtronic&limit=100&skip=100&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.specialist_agents:UDI: Fetching batch skip=200, search_type=manufacturer
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/udi.json?search=company_name%3AMedtronic&limit=100&skip=200&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.specialist_agents:UDI: Fetching batch skip=300, search_type=manufacturer
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/udi.json?search=company_name%3AMedtronic&limit=100&skip=300&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.specialist_agents:UDI: Fetching batch skip=400, search_type=manufacturer
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.fda.gov:443
+DEBUG:urllib3.connectionpool:https://api.fda.gov:443 "GET /device/udi.json?search=company_name%3AMedtronic&limit=100&skip=400&api_key=1bbdmBi9NPsEmGo4Ot0RE90R2V1TfhlhuuHW7S1n HTTP/1.1" 200 None
+INFO:enhanced_fda_explorer.specialist_agents:Fetched 500 UDI records out of 80279 total
+DEBUG:openai._base_client:Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-6a9417a6-c4e7-4fb9-9b54-ce5c1a3895bf', 'json_data': {'messages': [{'content': 'You are a specialist agent for FDA Unique Device Identifier (UDI) data.\n        Your expertise includes:\n        - Analyzing device identification and tracking\n        - Understanding labeler information\n        - Tracking device versions and models\n        - Identifying MRI safety information\n        - Assessing device characteristics\n        \n        Focus on:\n        1. Device identifiers and versions\n        2. Labeler/manufacturer information\n        3. MRI safety status\n        4. Storage and handling requirements\n        5. Device size and packaging configurations\n        \n        Output your analysis as JSON with key_findings, risk_indicators, and recommendations.\n        ', 'role': 'system'}, {'content': "\n            Analyze these FDA UDI data for Medtronic:\n            \n            Total devices: 80279\n            Labelers: 1\n            MRI safety info: {'Labeling does not contain MRI Safety Information': 468, 'MR Conditional': 28, 'MR Unsafe': 4}\n            \n            Device details:\n            [{'brand_name': 'Medtronic Reusable Instruments', 'version_model': 'X0214111', 'labeler': 'Unknown', 'mri_safety': 'Labeling does not contain MRI Safety Information', 'device_sizes': [], 'storage': '', 'commercial_distribution_date': ''}, {'brand_name': 'Midas Rex™', 'version_model': '10MH30SH', 'labeler': 'Unknown', 'mri_safety': 'Labeling does not contain MRI Safety Information', 'device_sizes': [], 'storage': '', 'commercial_distribution_date': ''}, {'brand_name': 'n/a', 'version_model': '7068321', 'labeler': 'Unknown', 'mri_safety': 'Labeling does not contain MRI Safety Information', 'device_sizes': [], 'storage': '', 'commercial_distribution_date': ''}]\n            \n            Assess device identification and characteristics.\n            ", 'role': 'user'}], 'model': 'openai/gpt-3.5-turbo', 'stream': False, 'temperature': 0.3}}
+DEBUG:openai._base_client:Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Fri, 19 Sep 2025 16:53:19 GMT'), (b'Content-Type', b'application/json'), (b'Transfer-Encoding', b'chunked'), (b'Connection', b'keep-alive'), (b'Content-Encoding', b'gzip'), (b'Access-Control-Allow-Origin', b'*'), (b'Vary', b'Accept-Encoding'), (b'Permissions-Policy', b'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")'), (b'Referrer-Policy', b'no-referrer, strict-origin-when-cross-origin'), (b'X-Content-Type-Options', b'nosniff'), (b'Server', b'cloudflare'), (b'CF-RAY', b'981a993a6f8757b2-IAD')])
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:openai._base_client:HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Fri, 19 Sep 2025 16:53:19 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer-policy': 'no-referrer, strict-origin-when-cross-origin', 'x-content-type-options': 'nosniff', 'server': 'cloudflare', 'cf-ray': '981a993a6f8757b2-IAD'})
+DEBUG:openai._base_client:request_id: None
+DEBUG:openai._base_client:Request options: {'method': 'post', 'url': '/chat/completions', 'files': None, 'idempotency_key': 'stainless-python-retry-c19e9f6c-4c52-48ff-b325-69e19f9a78fe', 'json_data': {'messages': [{'content': 'You are the synthesis agent responsible for combining insights from multiple specialist agents.\n        Your role is to:\n        1. Integrate findings from different data sources\n        2. Identify cross-cutting patterns and correlations\n        3. Provide factual summaries backed by FDA data\n        4. Generate evidence-based recommendations\n        5. Create an executive summary\n        \n        Important requirements:\n        - ONLY make claims that are supported by the data provided\n        - Cite specific FDA records when making statements\n        - Clearly indicate when no data was found for a particular query\n        - Distinguish between FDA data and interpretive analysis\n        - Avoid speculation or unsupported conclusions\n        \n        Provide a factual, evidence-based narrative suitable for healthcare professionals and regulators.\n        ', 'role': 'system'}, {'content': '\n            Create a concise factual summary of FDA data for Medtronic:\n            \n            {\n  "events_specialist": [\n    {\n      "key_findings": {\n        "event_types_breakdown": {\n          "Malfunction": 266,\n          "Injury": 226,\n          "Death": 8\n        },\n        "top_manufacturers": [\n          {\n            "manufacturer": "MEDTRONIC PUERTO RICO VILLALBA",\n            "event_count": 196\n          },\n          {\n            "manufacturer": "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n            "event_count": 81\n          },\n          {\n            "manufacturer": "MEDTRONIC SINGAPORE OPERATIONS",\n            "event_count": 45\n          },\n          {\n            "manufacturer": "MEDTRONIC IRELAND",\n            "event_count": 32\n          },\n          {\n            "manufacturer": "MEDTRONIC NEUROMODULATION",\n            "event_count": 24\n          }\n        ],\n        "recent_serious_events": [\n          {\n            "type": "Injury",\n            "date": "20240214",\n            "manufacturer": "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n            "mdr_report_key": "22920201",\n            "report_number": "3004209178-2025-14641"\n          },\n          {\n            "type": "Injury",\n            "date": "20250811",\n            "manufacturer": "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n            "mdr_report_key": "22920233",\n            "report_number": "3004209178-2025-14642"\n          },\n          {\n            "type": "Injury",\n            "date": "20250615",\n            "manufacturer": "MEDTRONIC IRELAND",\n            "mdr_report_key": "22920442",\n            "report_number": "9612164-2025-04265"\n          },\n          {\n            "type": "Injury",\n            "date": "20250620",\n            "manufacturer": "MEDTRONIC IRELAND",\n            "mdr_report_key": "22920479",\n            "report_number": "9612164-2025-04266"\n          },\n          {\n            "type": "Injury",\n            "date": "20250605",\n            "manufacturer": "MEDTRONIC IRELAND",\n            "mdr_report_key": "22920481",\n            "report_number": "9612164-2025-04267"\n          },\n          {\n            "type": "Injury",\n            "date": "20250522",\n            "manufacturer": "MEDTRONIC IRELAND",\n            "mdr_report_key": "22920483",\n            "report_number": "9612164-2025-04268"\n          },\n          {\n            "type": "Injury",\n            "date": "20250828",\n            "manufacturer": "MEDTRONIC MEXICO",\n            "mdr_report_key": "22920485",\n            "report_number": "9612164-2025-04269"\n          },\n          {\n            "type": "Injury",\n            "date": "20250624",\n            "manufacturer": "MEDTRONIC PUERTO RICO OPERATIONS CO.",\n            "mdr_report_key": "22920494",\n            "report_number": "3004209178-2025-14644"\n          },\n          {\n            "type": "Injury",\n            "date": "20250809",\n            "manufacturer": "MEDTRONIC PUERTO RICO VILLALBA",\n            "mdr_report_key": "22920495",\n            "report_number": "2649622-2025-23683"\n          },\n          {\n            "type": "Injury",\n            "date": "20230317",\n            "manufacturer": "MEDTRONIC PUERTO RICO VILLALBA",\n            "mdr_report_key": "22920506",\n            "report_number": "2649622-2025-23684"\n          }\n        ]\n      },\n      "data_citations": {\n        "event_data": "FDA adverse event data for Medtronic with a total of 278138 events.",\n        "recent_serious_events": "Specific recent serious events data retrieved from FDA records with MDR report keys and report numbers."\n      },\n      "recommendations": "Further investigation is recommended into the patterns of injuries associated with Medtronic devices, especially focusing on manufacturers like MEDTRONIC PUERTO RICO VILLALBA and MEDTRONIC PUERTO RICO OPERATIONS CO. Continuous monitoring of adverse events and prompt reporting is crucial for ensuring patient safety.",\n      "data_points": 500\n    }\n  ],\n  "recalls_specialist": [\n    {\n      "key_findings": {\n        "recall_severity": "All 41 recalls for Medtronic are classified as Unknown, indicating a lack of information on the potential severity of the issues.",\n        "reasons_for_recalls": {\n          "most_common": "The most common reasons for recalls include issues with Medtronic MiniMed pumps, software issues in application versions, catheters not retaining their shape, and incorrect labeling of certain models of Arterial Cannulae.",\n          "specific_examples": {\n            "Z-2461-2025": "Recall due to out of the box wobble of the driver.",\n            "Z-2168-2025": "Recall due to the Abort button stopping the selected test in prior SmartSync application versions."\n          }\n        },\n        "number_of_units_affected": {\n          "total": "Unknown",\n          "specific_examples": {\n            "Z-2461-2025": "Impacted distribution in multiple U.S. states and several countries outside the U.S.",\n            "Z-2168-2025": "Worldwide distribution"\n          }\n        },\n        "recall_status": {\n          "open_classified": "All recent recalls are marked as Open and Classified, indicating ongoing investigations and actions to address the issues."\n        },\n        "patterns_in_recall_causes": {\n          "common_patterns": "Recurring issues with Medtronic MiniMed pumps, software problems, and product design flaws like catheters not retaining shape or incorrect labeling."\n        }\n      },\n      "data_citations": {\n        "recalls_referenced": [\n          "Z-2480-2025",\n          "Z-2481-2025",\n          "Z-2482-2025",\n          "Z-2461-2025",\n          "Z-2168-2025"\n        ]\n      },\n      "recommendations": {\n        "1": "Medtronic should provide more detailed information on the severity of the issues leading to recalls to assist healthcare providers and patients in assessing risks.",\n        "2": "Further investigation and quality control measures are needed to address the recurring issues with Medtronic MiniMed pumps and software problems.",\n        "3": "Enhanced labeling processes should be implemented to prevent issues like incorrect labeling of medical devices."\n      },\n      "data_points": 41\n    }\n  ],\n  "clearances_specialist": [\n    {\n      "key_findings": {\n        "total_clearances": 18,\n        "recent_clearances": 18,\n        "top_applicants": [\n          {\n            "applicant": "Medtronic Sofamor Danek USA, Inc.",\n            "clearances": 3\n          },\n          {\n            "applicant": "Medtronic, Inc.",\n            "clearances": 3\n          },\n          {\n            "applicant": "Medtronic Sofamor Danek, Inc.",\n            "clearances": 2\n          }\n        ],\n        "top_product_codes": [\n          {\n            "product_code": "1000306431",\n            "clearances": 12\n          },\n          {\n            "product_code": "1220477",\n            "clearances": 11\n          },\n          {\n            "product_code": "2183744",\n            "clearances": 10\n          }\n        ]\n      },\n      "risk_indicators": {\n        "high_number_of_clearances": true,\n        "dominance_of_top_applicants": true,\n        "focus_on_specific_product_codes": true\n      },\n      "recommendations": {\n        "1": "Monitor the high number of clearances to ensure regulatory compliance and quality control.",\n        "2": "Conduct thorough reviews of the top applicants\' submissions to identify any trends or issues.",\n        "3": "Investigate the reasons behind the focus on specific product codes and assess if any modifications or updates are needed."\n      },\n      "data_points": 18\n    }\n  ],\n  "udi_specialist": [\n    {\n      "key_findings": {\n        "total_devices": 80279,\n        "total_labelers": 1,\n        "MRI_safety_info": {\n          "Labeling does not contain MRI Safety Information": 468,\n          "MR Conditional": 28,\n          "MR Unsafe": 4\n        }\n      },\n      "risk_indicators": {\n        "device_identification": "Some devices lack specific MRI safety information which may pose risks during MRI procedures.",\n        "device_characteristics": "Limited information provided on device sizes, storage requirements, and commercial distribution dates."\n      },\n      "recommendations": {\n        "1": "Ensure all devices are properly labeled with MRI safety information to prevent potential hazards.",\n        "2": "Enhance the documentation of device characteristics such as sizes, storage instructions, and distribution dates for better traceability and handling.",\n        "3": "Regularly update device information to comply with FDA regulations and improve patient safety measures."\n      }\n    }\n  ]\n}\n            \n            Structure your response as:\n            \n            ## Summary\n            [2-3 sentences on what the data shows]\n            \n            ## Key Data Points\n            - Total events: X (cite numbers)\n            - Total recalls: Y (cite recall numbers)\n            - Top manufacturers: List with counts\n            - Time period covered: Last 12 months\n            \n            ## Notable Findings\n            - Finding 1 with specific numbers/dates\n            - Finding 2 with FDA record references\n            - Finding 3 (only if significant)\n            \n            ## Data Limitations\n            - Note if any searches returned no results\n            - Mention if data appears incomplete\n            \n            Keep it brief, factual, and data-driven. No speculation or boilerplate.\n            \n            CRITICAL: Only use numbers that appear in the agent data above. \n            Do NOT invent or hallucinate any numbers.\n            If a number isn\'t in the data, don\'t include it.\n            ', 'role': 'user'}], 'model': 'openai/gpt-3.5-turbo', 'stream': False, 'temperature': 0.3}}
+DEBUG:openai._base_client:Sending HTTP Request: POST https://openrouter.ai/api/v1/chat/completions
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Fri, 19 Sep 2025 16:53:21 GMT'), (b'Content-Type', b'application/json'), (b'Transfer-Encoding', b'chunked'), (b'Connection', b'keep-alive'), (b'Content-Encoding', b'gzip'), (b'Access-Control-Allow-Origin', b'*'), (b'Vary', b'Accept-Encoding'), (b'Permissions-Policy', b'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")'), (b'Referrer-Policy', b'no-referrer, strict-origin-when-cross-origin'), (b'X-Content-Type-Options', b'nosniff'), (b'Server', b'cloudflare'), (b'CF-RAY', b'981a994809e357b2-IAD')])
+INFO:httpx:HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'POST']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:openai._base_client:HTTP Response: POST https://openrouter.ai/api/v1/chat/completions "200 OK" Headers({'date': 'Fri, 19 Sep 2025 16:53:21 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip', 'access-control-allow-origin': '*', 'vary': 'Accept-Encoding', 'permissions-policy': 'payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")', 'referrer-policy': 'no-referrer, strict-origin-when-cross-origin', 'x-content-type-options': 'nosniff', 'server': 'cloudflare', 'cf-ray': '981a994809e357b2-IAD'})
+DEBUG:openai._base_client:request_id: None
+  ✅ Complete!
+
+Query Analysis:
+ Primary Intent  profile                                                        
+ Devices                                                                        
+ Time Range                                                                     
+ Agents Used     events_specialist, recalls_specialist, clearances_specialist,  
+                 udi_specialist                                                 
+
+Agent Findings:
+
+events_specialist:
+  Debug - Keys: ['key_findings', 'data_citations', 'recommendations', 
+'data_points', 'raw_data']
+  Data points analyzed: 500
+  Search strategy: manufacturer_search
+  Raw data - Total: 278138
+
+recalls_specialist:
+  Debug - Keys: ['key_findings', 'data_citations', 'recommendations', 
+'data_points', 'raw_data']
+  Data points analyzed: 41
+  Search strategy: manufacturer_search
+  Raw data - Total: 41
+
+clearances_specialist:
+  Debug - Keys: ['key_findings', 'risk_indicators', 'recommendations', 
+'data_points', 'raw_data']
+  Data points analyzed: 18
+  Raw data - Total: 18
+
+udi_specialist:
+  Debug - Keys: ['key_findings', 'risk_indicators', 'recommendations', 
+'raw_data']
+  Data points analyzed: 0
+  Raw data - Total: 80279
+
+Synthesized Analysis:
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=0,level=0,tokens=0), 0, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=1,level=0,tokens=3), 1, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=3,level=0,tokens=6), 3, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=4,level=0,tokens=9), 4, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=4,level=0,tokens=9), 4, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=4,level=0,tokens=9), 4, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=4,level=0,tokens=9), 4, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=4,level=0,tokens=9), 4, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=4,level=2,tokens=11), 4, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=4,level=2,tokens=11), 5, 19, True
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=5,level=1,tokens=15), 5, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=5,level=1,tokens=15), 5, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=5,level=1,tokens=15), 5, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=5,level=2,tokens=16), 5, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=5,level=2,tokens=16), 6, 19, True
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=6,level=1,tokens=20), 6, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=6,level=1,tokens=20), 6, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=6,level=1,tokens=20), 6, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=6,level=2,tokens=21), 6, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=6,level=2,tokens=21), 7, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=7,level=2,tokens=24), 7, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=7,level=2,tokens=24), 7, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=7,level=2,tokens=24), 7, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=7,level=2,tokens=24), 7, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=7,level=2,tokens=24), 7, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=7,level=4,tokens=26), 7, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=7,level=4,tokens=26), 8, 19, True
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=8,level=3,tokens=30), 8, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=8,level=3,tokens=30), 8, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=8,level=3,tokens=30), 8, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=8,level=4,tokens=31), 8, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=8,level=4,tokens=31), 9, 19, True
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=9,level=3,tokens=35), 9, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=9,level=3,tokens=35), 9, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=9,level=3,tokens=35), 9, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=9,level=4,tokens=36), 9, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=9,level=4,tokens=36), 10, 19, True
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=10,level=1,tokens=42), 10, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=10,level=1,tokens=42), 10, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=10,level=1,tokens=42), 10, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=10,level=2,tokens=43), 10, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=12,level=1,tokens=47), 12, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=12,level=1,tokens=47), 12, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=12,level=1,tokens=47), 12, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=12,level=0,tokens=48), 12, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=13,level=0,tokens=51), 13, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=13,level=0,tokens=51), 13, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=13,level=0,tokens=51), 13, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=13,level=0,tokens=51), 13, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=13,level=0,tokens=51), 13, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=13,level=2,tokens=53), 13, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=13,level=2,tokens=53), 14, 19, True
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=14,level=1,tokens=57), 14, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=14,level=1,tokens=57), 14, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=14,level=1,tokens=57), 14, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=14,level=2,tokens=58), 14, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=14,level=2,tokens=58), 15, 19, True
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=15,level=1,tokens=62), 15, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=15,level=1,tokens=62), 15, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=15,level=1,tokens=62), 15, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=15,level=2,tokens=63), 15, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=17,level=1,tokens=67), 17, 19, True
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=17,level=1,tokens=67), 17, 19, True
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=17,level=1,tokens=67), 17, 19, True
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=17,level=0,tokens=68), 17, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=18,level=0,tokens=71), 18, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=18,level=0,tokens=71), 18, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=18,level=0,tokens=71), 18, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=18,level=0,tokens=71), 18, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=18,level=0,tokens=71), 18, 19, False
+DEBUG:markdown_it.rules_block.code:entering code: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.fence:entering fence: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.blockquote:entering blockquote: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.hr:entering hr: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.list:entering list: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.reference:entering reference: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.html_block:entering html_block: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.heading:entering heading: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.lheading:entering lheading: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+DEBUG:markdown_it.rules_block.paragraph:entering paragraph: StateBlock(line=18,level=2,tokens=73), 18, 19, False
+╭─────────────────────── FDA Device Intelligence Report ───────────────────────╮
+│                                                                              │
+│                                   Summary                                    │
+│                                                                              │
+│ The FDA data for Medtronic shows a total of 278,138 adverse events reported, │
+│ with 41 recalls classified as Unknown severity. There were 18 recent         │
+│ clearances granted to Medtronic, and 80,279 devices with Unique Device       │
+│ Identifiers (UDIs) were identified.                                          │
+│                                                                              │
+│                                                                              │
+│                               Key Data Points                                │
+│                                                                              │
+│  • Total events: 278,138                                                     │
+│  • Total recalls: 41                                                         │
+│  • Top manufacturers:                                                        │
+│     1 MEDTRONIC PUERTO RICO VILLALBA: 196 events                             │
+│     2 MEDTRONIC PUERTO RICO OPERATIONS CO.: 81 events                        │
+│     3 MEDTRONIC SINGAPORE OPERATIONS: 45 events                              │
+│  • Time period covered: Recent data points within the last 12 months         │
+│                                                                              │
+│                                                                              │
+│                               Notable Findings                               │
+│                                                                              │
+│  • The most common event types were Malfunction (266), Injury (226), and     │
+│    Death (8).                                                                │
+│  • Specific recent serious events include injuries reported on various dates │
+│    in 2024 and 2025, with references to FDA records like MDR report keys and │
+│    report numbers.                                                           │
+│  • Recurring issues with Medtronic MiniMed pumps, software problems, and     │
+│    product design flaws were common reasons for recalls.                     │
+│                                                                              │
+│                                                                              │
+│                               Data Limitations                               │
+│                                                                              │
+│  • No data limitations were mentioned in the provided information.           │
+╰──────────────────────────────────────────────────────────────────────────────╯

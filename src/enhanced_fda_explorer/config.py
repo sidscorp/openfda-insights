@@ -175,7 +175,7 @@ class CacheConfig(BaseModel):
         
         return v
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_redis_config(cls, values):
         """Validate Redis configuration consistency"""
         backend = values.get("backend")
@@ -418,6 +418,7 @@ class Config(BaseSettings):
         case_sensitive = False
         env_nested_delimiter = "__"
         validate_assignment = True
+        extra = "ignore"  # Allow extra fields from .env
     
     @validator("environment")
     def validate_environment(cls, v):
@@ -443,7 +444,7 @@ class Config(BaseSettings):
             raise ValueError("max_date_range_months must be greater than or equal to default_date_range_months")
         return v
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_port_conflicts(cls, values):
         """Validate that API and WebUI ports don't conflict"""
         api_port = values.get("api", {}).port if hasattr(values.get("api", {}), 'port') else values.get("api", {}).get("port", 8000)
@@ -464,7 +465,7 @@ class Config(BaseSettings):
         
         return values
     
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def validate_ai_requirements(cls, values):
         """Validate AI configuration requirements"""
         ai_config = values.get("ai")
