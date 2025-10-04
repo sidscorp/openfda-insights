@@ -52,6 +52,13 @@ dashboard.log
 docs/corpus.json
 fixtures/*.json
 
+# Internal development docs
+STATUS.md
+STATUS_RESOLUTION.md
+QUICK_TESTS.md
+FDA_ANALYST_TESTS.md
+IMPLEMENTATION_SUMMARY.md
+
 # Temporary files
 *.tmp
 *.bak
