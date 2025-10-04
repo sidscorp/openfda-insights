@@ -2,6 +2,17 @@
 
 An intelligent FDA device database query assistant that understands natural language and provides comprehensive safety analysis using the openFDA API.
 
+## Agentic System Architecture
+
+This system operates as an autonomous agent within the FDA's device data ecosystem, exhibiting genuine agency through perception, planning, action, and memory cycles:
+
+- **Perception**: Natural language queries are analyzed and transformed into structured understanding through LLM-based intent classification and parameter extraction
+- **Planning**: A LangGraph state-machine controller synthesizes execution plans, selecting optimal strategies and orchestrating multi-step workflows
+- **Action**: Typed tool wrappers execute against FDA endpoints, handling pagination, retries, and cross-endpoint synthesis
+- **Memory**: State persistence captures tool history, safety aggregates, and assessment feedback to inform subsequent decisions
+
+Unlike static query systems, this agent continuously senses, decides, acts, and adapts—demonstrating true autonomy in navigating complex regulatory data requirements. The architecture combines deterministic parameter extraction with probabilistic reasoning, retrieval-augmented generation for documentation grounding, and comprehensive safety workups across multiple FDA endpoints.
+
 ## Features
 
 - 🤖 **Natural Language Understanding**: Ask questions in plain English about FDA device data
