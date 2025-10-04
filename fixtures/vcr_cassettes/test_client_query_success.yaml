@@ -1,0 +1,105 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - openfda-agent/1.0
+    method: GET
+    uri: https://api.fda.gov/device/classification.json?limit=5&search=device_class%3A2&skip=0
+  response:
+    body:
+      string: !!binary |
+        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
+    headers:
+      Access-Control-Allow-Credentials:
+      - 'true'
+      Access-Control-Allow-Origin:
+      - '*'
+      Age:
+      - '0'
+      Cache-Control:
+      - no-cache, no-store, must-revalidate
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Security-Policy:
+      - default-src 'none'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Thu, 02 Oct 2025 21:40:47 GMT
+      Etag:
+      - W/"230e-TpIgBmtyokGmuaFpCZlbVGBl51Y"
+      Link:
+      - <https://api.fda.gov/device/classification.json?limit=5&skip=0&search=device_class%3A2&search_after=0%3D-9mPkZkBxAPQK6yHs_zW>;
+        rel="next"
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Accept-Encoding
+      - Accept-Encoding
+      Via:
+      - https/1.1 api-umbrella (ApacheTrafficServer [cMsSf ])
+      X-Api-Umbrella-Request-Id:
+      - cpkrfdo7up3sodf8kk60
+      X-Cache:
+      - MISS
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - deny
+      X-Vcap-Request-Id:
+      - 6bdeb483-d924-427a-5304-7617379a8ba7
+      X-Xss-Protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1

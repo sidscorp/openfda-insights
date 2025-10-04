@@ -1,0 +1,119 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - openfda-agent/1.0
+    method: GET
+    uri: https://api.fda.gov/device/udi.json?limit=5&search=brand_name%3A%22Pacemaker%22&skip=0
+  response:
+    body:
+      string: !!binary |
+        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
+    headers:
+      Access-Control-Allow-Credentials:
+      - 'true'
+      Access-Control-Allow-Origin:
+      - '*'
+      Age:
+      - '0'
+      Cache-Control:
+      - no-cache, no-store, must-revalidate
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Security-Policy:
+      - default-src 'none'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Thu, 02 Oct 2025 21:40:52 GMT
+      Etag:
+      - W/"380b-qwYGjlojnRqqe3oyGU80728LIIU"
+      Link:
+      - <https://api.fda.gov/device/udi.json?limit=5&skip=0&search=brand_name%3A%22Pacemaker%22&search_after=0%3DBEqwoJkBh_BXVk9QNL6Y>;
+        rel="next"
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Accept-Encoding
+      - Accept-Encoding
+      Via:
+      - https/1.1 api-umbrella (ApacheTrafficServer [cMsSf ])
+      X-Api-Umbrella-Request-Id:
+      - cpkrfeupld7lri5mco9g
+      X-Cache:
+      - MISS
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - deny
+      X-Vcap-Request-Id:
+      - 81995a21-84f2-4ba1-4577-bbb8d631602c
+      X-Xss-Protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1

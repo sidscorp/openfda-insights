@@ -1,0 +1,116 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - openfda-agent/1.0
+    method: GET
+    uri: https://api.fda.gov/device/pma.json?limit=5&search=decision_date%3A%5B20200101+TO+20201231%5D&skip=0
+  response:
+    body:
+      string: !!binary |
+        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
+        nurcT0ivv/4Pt5gqlpYsAAA=
+    headers:
+      Access-Control-Allow-Credentials:
+      - 'true'
+      Access-Control-Allow-Origin:
+      - '*'
+      Age:
+      - '0'
+      Cache-Control:
+      - no-cache, no-store, must-revalidate
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Security-Policy:
+      - default-src 'none'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Thu, 02 Oct 2025 21:40:50 GMT
+      Etag:
+      - W/"2c96-zYGaDplAtxVylkkGpuWXI+YVh8A"
+      Link:
+      - <https://api.fda.gov/device/pma.json?limit=5&skip=0&search=decision_date%3A%5B20200101%20TO%2020201231%5D&search_after=0%3D-9qQkZkBxAPQK6yHhLrx>;
+        rel="next"
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Accept-Encoding
+      - Accept-Encoding
+      Via:
+      - https/1.1 api-umbrella (ApacheTrafficServer [cMsSf ])
+      X-Api-Umbrella-Request-Id:
+      - cpkrfeidg2vomaedudd0
+      X-Cache:
+      - MISS
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - deny
+      X-Vcap-Request-Id:
+      - 5760fabb-f553-45d6-7a2b-a0243af5175f
+      X-Xss-Protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1

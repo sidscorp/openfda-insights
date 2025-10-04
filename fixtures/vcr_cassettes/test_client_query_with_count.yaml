@@ -1,0 +1,71 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - openfda-agent/1.0
+    method: GET
+    uri: https://api.fda.gov/device/510k.json?count=product_code&limit=10&skip=0
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAEA3yR20oDMRCG732KYa+1ralbW+/ErSdExAqeEAnZaTeYTUoyqRTx3Z1sKyKue7Nk
+        M/833yT52AHIaiSZHcEHr/mv1EEZqWv0vJcVDqwj8GjW4Cy4JdrT4hjIQS3fEEpUOmhnAycW0pfa
+        LqDGUitpQEmPPbivtEF4x00eV+jXgPO585SaoA3RI1AlCUpJEnQAqVT0knAX1i5CqFw0JcgQYo0g
+        jWFTiIY4x2C0K2k0k1iyKknWYHStCZwHRxX6dx0wIeS1otTRJwGGkPQcgOObC9CWKctjaqogRe7Q
+        1wHcHGboV1phL9vd3A6lQrqYimgZjvr9dCO9eSl7C7fqN9X+d9YwaAP+m97Wf/Iy0GtcNqdJkBiI
+        fG8w2RMiY/lnmiDbHp7Lz81Am0fjQlIn6Gz6sPXzpnLREu+K8eCgiTdNYPvUv6iLFkqMRCd1dfXU
+        Rg3H3dTj419qf5J3T1g8TVuoXOSdrhbkIB90Imcnly3UcNItms6KNmp02Ok6v521UGLU7Soerluo
+        /clw4+Lvy87nFwAAAP//AwAnv+DF2gMAAA==
+    headers:
+      Access-Control-Allow-Credentials:
+      - 'true'
+      Access-Control-Allow-Origin:
+      - '*'
+      Age:
+      - '0'
+      Cache-Control:
+      - no-cache, no-store, must-revalidate
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Security-Policy:
+      - default-src 'none'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Thu, 02 Oct 2025 21:41:23 GMT
+      Etag:
+      - W/"3da-4yG4t74oG9Z0YJQvyW4aQ/+Zt9g"
+      Strict-Transport-Security:
+      - max-age=31536000; includeSubDomains; preload
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Accept-Encoding
+      - Accept-Encoding
+      Via:
+      - https/1.1 api-umbrella (ApacheTrafficServer [cMsSf ])
+      X-Api-Umbrella-Request-Id:
+      - cpkrfml7t8doisfpc4cg
+      X-Cache:
+      - MISS
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - deny
+      X-Vcap-Request-Id:
+      - d8f5f5b4-31ab-43c6-4166-abce11ed203d
+      X-Xss-Protection:
+      - 1; mode=block
+    status:
+      code: 200
+      message: OK
+version: 1
