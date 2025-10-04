@@ -23,6 +23,14 @@ Unlike static query systems, this agent continuously senses, decides, acts, and 
 - 📚 **RAG-Enhanced**: Uses retrieval-augmented generation for accurate field mapping
 - 🔧 **Extensible Tools**: Modular design with separate tools for each FDA endpoint
 
+## Dashboard Interface
+
+![OpenFDA Dashboard Overview](docs/images/dashboard-overview.png)
+*The dashboard provides an intuitive interface with quick action templates for common FDA queries*
+
+![Dashboard Workflow Visualization](docs/images/dashboard-workflow.png)
+*Real-time visualization of the agent's perception-routing-extraction-search workflow, showing LLM-orchestrated query analysis and parameter extraction*
+
 ## Quick Start
 
 ### Prerequisites
@@ -103,60 +111,95 @@ python -m tools.k510 --applicant "Boston Scientific" --limit 5
 ```
 openfda_agent/
 ├── agent/          # LangGraph agent orchestration
-│   ├── graph.py    # Main agent workflow
-│   ├── router.py   # Intelligent query routing
-│   └── extractor.py # Parameter extraction
-├── tools/          # FDA API endpoint tools
-│   ├── classification.py
-│   ├── recall.py
-│   ├── k510.py
-│   ├── pma.py
-│   ├── maude.py
-│   └── udi.py
-├── dashboard/      # Web interface
-│   └── app.py      # FastAPI application
-├── rag/           # Retrieval-augmented generation
-│   ├── retrieval.py
-│   └── hybrid.py   # BM25 + semantic search
-└── tests/         # Test suite
+│   ├── graph.py    # Main agent workflow with bounded retry budget
+│   ├── router.py   # LLM-backed query analysis and planning
+│   ├── extractor.py # Structured parameter extraction with validators
+│   └── state.py    # AgentState for belief tracking
+├── tools/          # Typed FDA API endpoint wrappers
+│   ├── classification.py  # Device classifications and product codes
+│   ├── recall.py          # Enforcement actions
+│   ├── k510.py            # Premarket notifications
+│   ├── pma.py             # Premarket approvals
+│   ├── maude.py           # Adverse event reports
+│   ├── udi.py             # Unique device identifiers
+│   └── rl.py              # Registration & listing
+├── dashboard/      # FastAPI web interface
+│   └── app.py      # Session management and WebSocket streaming
+├── rag/           # Hybrid retrieval system
+│   ├── retrieval.py       # Documentation corpus management
+│   └── hybrid.py          # BM25 + semantic similarity with RRF
+└── tests/         # Comprehensive test suite
+    ├── unit/              # VCR-recorded tool tests
+    └── integration/       # End-to-end agent validation
 ```
+
+### Control Flow Architecture
+
+The system implements a four-node LangGraph state machine:
+
+1. **Router Node**: Performs LLM-based query analysis, categorizes intent, and synthesizes execution plans
+2. **Execute Tools Node**: Invokes typed tool wrappers with validated parameters
+3. **Assessor Node**: Evaluates sufficiency using deterministic checks and safety short-circuits
+4. **Answer Node**: Formats responses with comprehensive provenance metadata
+
+The agent maintains `AgentState` throughout the episode, capturing:
+- Query analysis and classification
+- Tool call history and results
+- Safety aggregates from multi-endpoint checks
+- Assessor feedback for retry adjustments
 
 ## Key Capabilities
 
-### 1. Intelligent Query Understanding
-The agent uses LLM-based analysis to understand query intent and automatically determines:
-- Query type (search, aggregation, count, safety check)
-- Required endpoints
-- Need for cross-referencing
+### 1. LLM-Orchestrated Query Planning
+Every query undergoes structured analysis through Claude prompts that elicit:
+- **Query Classification**: AGGREGATION, SEARCH, COUNT, or SAFETY_CHECK intent
+- **Entity Extraction**: Product codes, K-numbers, dates with confidence scoring
+- **Execution Strategy**: Selection between `exact`, `category`, or `broad` search approaches
+- **Cross-Reference Detection**: Automatic identification when multiple endpoints are needed
 
-### 2. Cross-Reference Resolution
-Handles impossible direct queries by combining data from multiple endpoints:
-- "Which product codes have recalls?" (recalls don't contain product codes directly)
-- Automatically fetches classification data to enrich recall information
+### 2. Parameter Extraction and Validation
+The `ParameterExtractor` leverages Claude's structured outputs with:
+- **Regex Pre-extraction**: Captures deterministic patterns (K-numbers, product codes) before LLM invocation
+- **Pydantic Validators**: Normalize device classes, enforce three-letter product codes, verify date formats
+- **Confidence Heuristics**: Low-certainty fields trigger RAG assistance when scores fall below 0.8
+- **Provenance Trail**: Emits human-readable filter strings for audit requirements
 
-### 3. Safety Analysis
-Comprehensive safety checks across multiple databases:
-- Recalls (enforcement actions)
-- MAUDE (adverse events)
-- Classification details
-- Related device analysis
+### 3. Cross-Endpoint Safety Synthesis
+When safety intent is detected, the agent executes a three-pronged review:
+- **Recall Analysis**: Enforcement records with enriched product code data via classification lookup
+- **MAUDE Integration**: Adverse event narratives and patient impact descriptors
+- **Classification Metadata**: Device class, regulation numbers, and panel information
+- **Related Device Fallback**: Expands search to similar devices if direct matches are absent
 
-### 4. Smart Fallbacks
-- Handles future dates gracefully (e.g., "recalls in 2025")
-- Suggests alternatives when no data exists
-- Provides context for zero-result queries
+### 4. Environment Adaptation
+The agent accommodates openFDA constraints through:
+- **Rate Limit Handling**: Differentiates 429 responses and adjusts retry strategy
+- **Sparse Field Management**: Works around missing product codes in recalls
+- **Temporal Awareness**: Handles future date requests gracefully with explanations
+- **Pagination Control**: Safe bounded iteration with configurable limits
 
-## API Endpoints
+## Environment Modeling
 
-The agent integrates with 7 FDA database endpoints:
+The agent experiences the openFDA ecosystem as a partially observable environment:
 
-1. **Classification**: Device classifications and product codes
-2. **510(k)**: Premarket notifications
-3. **PMA**: Premarket approvals
-4. **Recall**: Enforcement actions and recalls
-5. **MAUDE**: Adverse event reports
-6. **UDI**: Unique device identification
-7. **Registration & Listing**: Establishment registrations
+### Observable State
+- **Primary Channels**: JSON `results` containing domain records and `meta` with dataset-level signals
+- **Temporal Dynamics**: Non-stationary environment with continual updates (new recalls, MAUDE reports)
+- **Error Signals**: HTTP status codes, rate-limit headers, and empty result sets inform recovery strategies
+- **Documentation Corpus**: 100+ scraped field guides and routing hints provide latent structural knowledge
+
+### Action Space
+Each tool encapsulates environment interaction with typed contracts:
+
+| Tool | Endpoint | Key Capabilities | Provenance Data |
+|------|----------|-----------------|-----------------|
+| `classify` | `/device/classification` | Product code validation, device class lookup | `meta.last_updated`, regulation numbers |
+| `k510_search` | `/device/510k` | Clearance history, applicant search | K-numbers, decision dates |
+| `pma_search` | `/device/pma` | Approval chronology, supplements | PMA numbers, approval dates |
+| `recall_search` | `/device/enforcement` | Safety actions, firm identification | Recall numbers, classification |
+| `maude_search` | `/device/event` | Adverse events, patient outcomes | Event types, narrative text |
+| `udi_search` | `/device/udi` | Device identifiers, packaging | DI records, brand names |
+| `rl_search` | `/device/registrationlisting` | Establishment data, geography | FEI numbers, locations |
 
 ## Configuration
 
@@ -175,25 +218,48 @@ CLI flags:
 - `--dry-run`: Test routing without API calls
 - `--output json`: Return JSON formatted results
 
-## Development
+## Hybrid Retrieval System
 
-### Running Tests
+The RAG implementation fuses multiple retrieval strategies for optimal documentation grounding:
+
+### Retrieval Architecture
+- **BM25 Scoring**: Term frequency-based matching for exact field names and technical terms
+- **Semantic Embeddings**: Dense vector similarity using sentence-transformers for conceptual matching
+- **Reciprocal Rank Fusion**: Combines BM25 and embedding scores to maintain high recall while suppressing noise
+- **Endpoint Filtering**: Concentrates search on relevant documentation slices based on detected endpoint
+
+### Documentation Corpus
+- Official openFDA field guides and endpoint documentation
+- Internal glossaries for brand/firm aliases and common misspellings
+- Routing cheatsheets mapping intents to endpoints
+- Product code to generic name mappings
+
+## Evaluation and Validation
+
+### Automated Testing Strategy
 
 ```bash
-make test          # Run unit tests
-make integration   # Run integration tests
-make smoke         # Quick functionality check
+make test          # Unit tests with VCR-recorded HTTP interactions
+make integration   # End-to-end agent validation with live LLM calls
+make smoke         # Quick functionality check with canonical queries
 ```
 
-### Building Documentation
+### Test Coverage
+- **Unit Tests**: Verify tool primitives under recorded HTTP interactions
+- **Integration Tests**: Exercise routing accuracy, extraction completeness, and assessor guardrails
+- **Regression Suite**: Demonstrates structured extraction, Lucene generation, and provenance stamping
 
+### Observed Metrics
+- **Routing Accuracy**: >90% correct endpoint selection on labeled question set
+- **Extraction Confidence**: Successfully signals low-confidence for ambiguous fields
+- **Safety Synthesis**: Comprehensive multi-endpoint dossiers with fallback strategies
+- **Provenance Completeness**: All responses include endpoint, query, timestamps, and record counts
+
+### CLI Validation Modes
 ```bash
-make docs          # Generate documentation
+python -m agent.cli "your query" --dry-run   # Test routing without API calls
+python -m agent.cli "your query" --explain   # Show detailed decision process
 ```
-
-### Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Troubleshooting
 
@@ -210,16 +276,10 @@ Run with explain flag for detailed execution trace:
 python -m agent.cli "your query" --explain
 ```
 
-## License
+## Technical Foundation
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built with [LangGraph](https://github.com/langchain-ai/langgraph) and [LangChain](https://langchain.com/)
-- Powered by [Claude](https://www.anthropic.com/claude) and [OpenFDA API](https://open.fda.gov/)
-- RAG implementation using [sentence-transformers](https://www.sbert.net/)
-
-## Contact
-
-For issues, questions, or contributions, please open an issue on GitHub.
+- **Orchestration**: [LangGraph](https://github.com/langchain-ai/langgraph) state-machine controller for deterministic workflow management
+- **Language Model**: [Claude](https://www.anthropic.com/claude) for query analysis, planning, and parameter extraction
+- **Data Source**: [OpenFDA API](https://open.fda.gov/) providing 7 device database endpoints
+- **Retrieval**: [sentence-transformers](https://www.sbert.net/) for semantic embedding generation
+- **Validation**: Pydantic models ensuring type safety and parameter validation across all tool contracts
