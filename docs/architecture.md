@@ -1,448 +1,223 @@
-# Architecture
+# Architecture & Design Decisions
 
-Enhanced FDA Explorer is designed as a modular, scalable platform for FDA medical device data exploration with AI-powered analysis capabilities.
+This document explains the engineering choices behind the FDA Explorer system.
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Enhanced FDA Explorer                        │
-├─────────────────────────────────────────────────────────────────┤
-│                      User Interfaces                           │
-├──────────────┬──────────────┬──────────────┬──────────────────┤
-│   Web UI     │   REST API   │   CLI Tool   │   Python SDK     │
-│ (Streamlit)  │  (FastAPI)   │   (Click)    │    (asyncio)     │
-└──────────────┴──────────────┴──────────────┴──────────────────┘
-├─────────────────────────────────────────────────────────────────┤
-│                      Core Engine                               │
-├──────────────┬──────────────┬──────────────┬──────────────────┤
-│   Enhanced   │      AI      │    Config    │   Task Manager   │
-│   Client     │   Analysis   │  Management  │   (Optional)     │
-│              │    Engine    │              │                  │
-└──────────────┴──────────────┴──────────────┴──────────────────┘
-├─────────────────────────────────────────────────────────────────┤
-│                       Data Layer                               │
-├──────────────┬──────────────┬──────────────┬──────────────────┤
-│   OpenFDA    │   Caching    │   Database   │   File Storage   │
-│   API Client │  (Redis/Mem) │ (SQLite/PG)  │   (Optional)     │
-└──────────────┴──────────────┴──────────────┴──────────────────┘
-├─────────────────────────────────────────────────────────────────┤
-│                    Infrastructure                              │
-├──────────────┬──────────────┬──────────────┬──────────────────┤
-│ Logging &    │ Auth & RBAC  │   Rate       │   Deployment     │
-│ Monitoring   │ (Optional)   │  Limiting    │ (Docker/K8s)     │
-└──────────────┴──────────────┴──────────────┴──────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                        User Interfaces                       │
+│  ┌─────────┐  ┌─────────────┐  ┌──────────────────────────┐ │
+│  │   CLI   │  │  REST API   │  │   Web UI (Future)        │ │
+│  │ (Click) │  │  (FastAPI)  │  │   (Next.js planned)      │ │
+│  └────┬────┘  └──────┬──────┘  └────────────┬─────────────┘ │
+└───────┼──────────────┼──────────────────────┼───────────────┘
+        │              │                      │
+        ▼              ▼                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      FDA Agent (LangGraph)                   │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │                    StateGraph Workflow                  ││
+│  │  [User Question] → [Agent] ⟷ [Tools] → [Response]      ││
+│  └─────────────────────────────────────────────────────────┘│
+│                              │                               │
+│  ┌───────────────────────────┼───────────────────────────┐  │
+│  │                     7 Agent Tools                      │  │
+│  │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │  │
+│  │ │ Device   │ │ Events   │ │ Recalls  │ │  510(k)  │   │  │
+│  │ │ Resolver │ │ Search   │ │ Search   │ │  Search  │   │  │
+│  │ └──────────┘ └──────────┘ └──────────┘ └──────────┘   │  │
+│  │ ┌──────────┐ ┌──────────┐ ┌──────────┐                │  │
+│  │ │   PMA    │ │  Class.  │ │   UDI    │                │  │
+│  │ │  Search  │ │  Search  │ │  Search  │                │  │
+│  │ └──────────┘ └──────────┘ └──────────┘                │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+        │                              │
+        ▼                              ▼
+┌───────────────────┐    ┌────────────────────────────────────┐
+│    LLM Factory    │    │           Data Sources              │
+│ ┌───────────────┐ │    │ ┌──────────┐  ┌─────────────────┐  │
+│ │  OpenRouter   │ │    │ │  GUDID   │  │   OpenFDA API   │  │
+│ │    Bedrock    │ │    │ │ (SQLite) │  │  (6 endpoints)  │  │
+│ │    Ollama     │ │    │ └──────────┘  └─────────────────┘  │
+│ └───────────────┘ │    └────────────────────────────────────┘
+└───────────────────┘
 ```
 
-## Core Components
+## Key Design Decisions
 
-### 1. User Interfaces
+### 1. Single Agent Architecture (Not Multi-Agent)
 
-#### Web UI (Streamlit)
-- **Technology**: Streamlit framework
-- **Purpose**: Interactive web dashboard for non-technical users
-- **Features**:
-  - Device search and analysis
-  - Interactive visualizations
-  - Report generation
-  - Real-time data updates
-- **Location**: `src/enhanced_fda_explorer/web.py`
+**Decision**: Use one LangGraph agent with multiple tools instead of specialized sub-agents.
 
-#### REST API (FastAPI)
-- **Technology**: FastAPI with async support
-- **Purpose**: Programmatic access for applications and integrations
-- **Features**:
-  - RESTful endpoints
-  - OpenAPI/Swagger documentation
-  - Rate limiting
-  - Input validation
-- **Location**: `src/enhanced_fda_explorer/api.py`
+**Why**:
+- **Simplicity**: One agent is easier to debug, test, and maintain
+- **Context sharing**: Single agent maintains full conversation context
+- **Lower latency**: No agent-to-agent communication overhead
+- **Cost efficiency**: Fewer LLM calls than multi-agent orchestration
 
-#### CLI Tool (Click)
-- **Technology**: Click framework with Rich formatting
-- **Purpose**: Command-line interface for automation and scripting
-- **Features**:
-  - Comprehensive command set
-  - Rich terminal output
-  - Pipeline-friendly JSON output
-  - Configuration management
-- **Location**: `src/enhanced_fda_explorer/cli.py`
+**Trade-off**: Less parallelization of complex queries, but FDA queries are typically sequential (resolve device → search events → analyze).
 
-#### Python SDK
-- **Technology**: Async Python with asyncio
-- **Purpose**: Programmatic access for Python applications
-- **Features**:
-  - Async/await support
-  - Type hints
-  - Comprehensive error handling
-  - Context manager support
-- **Location**: `src/enhanced_fda_explorer/client.py`
+### 2. LangGraph over Raw LangChain
 
-### 2. Core Engine
+**Decision**: Use LangGraph's StateGraph for agent orchestration.
 
-#### Orchestrator (Conversational Agent)
-- **Purpose**: Interpret user questions and orchestrate multi-endpoint device queries and AI responses.
-- **Responsibilities**:
--   - Classify user intent for device-related queries (e.g. manufacturer lookup, location analysis).
--   - Plan and execute calls to appropriate OpenFDA device endpoints (events, recalls, classification, UDI, etc.).
--   - Aggregate and normalize results from multiple endpoints.
--   - Invoke AI Analysis Engine to generate coherent conversational answers.
-- **LLM Provider Options**: OpenAI, OpenRouter, Anthropic, or local models (e.g. HuggingFace smolagents).
-- **Location**: `src/enhanced_fda_explorer/orchestrator.py`
+**Why**:
+- **Explicit control flow**: Clear agent → tools → agent cycle
+- **State management**: TypedDict state with message history
+- **Debuggability**: Can inspect state at each node
+- **Streaming**: Built-in support for streaming responses
 
-#### Enhanced Client
-- **Purpose**: Orchestrates data retrieval and processing
-- **Responsibilities**:
--   - OpenFDA API interaction
--   - Data validation and normalization
--   - Error handling and retries
--   - Rate limiting compliance
-- **Key Classes**:
--   - `FDAExplorer`: Main client class
--   - `OpenFDAClient`: Low-level API client
--   - `DataNormalizer`: Data processing
+**Alternative considered**: LangChain's AgentExecutor - rejected due to less visibility into execution flow.
 
-#### AI Analysis Engine
-- **Purpose**: Provides intelligent analysis and insights
-- **Capabilities**:
-  - Risk assessment scoring
-  - Trend analysis
-  - Comparative analysis
-  - Natural language summaries
-- **Supported Providers**:
-  - OpenAI (GPT-4, GPT-3.5)
-  - Anthropic (Claude)
-  - OpenRouter (Multiple models)
-  - HuggingFace smolagents (local agentic framework)
-- **Location**: `src/enhanced_fda_explorer/ai.py`
+### 3. Multi-Provider LLM Factory
 
-#### Configuration Management
-- **Purpose**: Centralized configuration handling
-- **Features**:
-  - Environment variable support
-  - YAML configuration files
-  - Pydantic validation
-  - Hot reloading (development)
-- **Location**: `src/enhanced_fda_explorer/config.py`
+**Decision**: Central `LLMFactory` class that abstracts provider differences.
 
-### 3. Data Layer
+**Why**:
+- **Flexibility**: Switch providers without changing agent code
+- **Cost optimization**: Use cheaper models for simple queries
+- **Resilience**: Fall back to different providers if one fails
+- **Local development**: Use Ollama locally, cloud in production
 
-#### OpenFDA API Integration
-- **Databases Supported**:
-  - Device Events (adverse events)
-  - Device Recalls
-  - 510(k) Clearances
-  - PMA Approvals
-  - Device Classifications
-  - UDI Database
-- **Features**:
-  - Automatic pagination
-  - Field filtering
-  - Date range queries
-  - Complex search expressions
+**Implementation**:
+```python
+LLMFactory.create(provider="bedrock", model="anthropic.claude-3-haiku")
+LLMFactory.create(provider="openrouter", model="anthropic/claude-3-haiku")
+LLMFactory.create(provider="ollama", model="llama3.1")
+```
 
-#### Caching Layer
-- **Backends**:
-  - Redis (production)
-  - In-memory (development)
-- **Features**:
-  - Configurable TTL
-  - Cache invalidation
-  - Compression
-  - Statistics tracking
+### 4. GUDID as Local SQLite Database
 
-#### Database Layer (Optional)
-- **Backends**:
-  - SQLite (development)
-  - PostgreSQL (production)
-- **Purpose**:
-  - User data storage
-  - Query history
-  - Custom analytics
-  - Audit trails
+**Decision**: Download and query GUDID locally rather than API calls.
+
+**Why**:
+- **Speed**: Local queries are 10-100x faster than API calls
+- **Fuzzy matching**: Full-text search with custom scoring
+- **No rate limits**: Unlimited queries
+- **Offline capability**: Works without internet
+
+**Trade-off**: Requires periodic database updates (monthly GUDID releases).
+
+**Schema design**: Denormalized for query speed over storage efficiency.
+
+### 5. Tool Design: Focused Single-Purpose Tools
+
+**Decision**: Each tool does one thing well with structured output.
+
+**Why**:
+- **LLM understanding**: Simpler tool descriptions = better tool selection
+- **Composability**: Agent can combine tools for complex queries
+- **Testability**: Each tool can be unit tested independently
+- **Error isolation**: Tool failures don't cascade
+
+**The 7 tools**:
+| Tool | Purpose | Data Source |
+|------|---------|-------------|
+| `DeviceResolverTool` | Map names → FDA codes | GUDID (local) |
+| `SearchEventsTool` | Adverse events | OpenFDA |
+| `SearchRecallsTool` | Product recalls | OpenFDA |
+| `Search510kTool` | 510(k) clearances | OpenFDA |
+| `SearchPMATool` | PMA approvals | OpenFDA |
+| `SearchClassificationsTool` | Device classifications | OpenFDA |
+| `SearchUDITool` | UDI records | OpenFDA |
+
+### 6. FastAPI with SSE Streaming
+
+**Decision**: Server-Sent Events for real-time agent responses.
+
+**Why**:
+- **User experience**: Show thinking/tool calls as they happen
+- **Simplicity**: SSE is simpler than WebSockets for one-way streaming
+- **Compatibility**: Works with standard HTTP infrastructure
+- **Resumability**: Can reconnect and continue stream
+
+**Implementation**: `/api/agent/stream/{question}` endpoint yields events as agent executes.
+
+### 7. Configuration via Pydantic Settings
+
+**Decision**: Use `pydantic-settings` for configuration management.
+
+**Why**:
+- **Type safety**: Validated configuration at startup
+- **Environment variables**: 12-factor app compliance
+- **Defaults**: Sensible defaults with override capability
+- **Documentation**: Self-documenting configuration schema
+
+**Hierarchy** (highest to lowest priority):
+1. CLI arguments
+2. Environment variables
+3. `.env` file
+4. `config/config.yaml`
+5. Code defaults
+
+### 8. Click + Rich for CLI
+
+**Decision**: Click framework with Rich for terminal output.
+
+**Why**:
+- **Click**: Composable commands, automatic help, type conversion
+- **Rich**: Formatted tables, panels, progress bars, syntax highlighting
+- **Pipeline-friendly**: `--json` flag for machine-readable output
 
 ## Data Flow
 
-### 1. Search Request Flow
+### Agent Query Flow
 
 ```
-User Input → Interface Layer → Core Engine → OpenFDA API
-    ↓              ↓              ↓             ↓
-Response ← UI/API/CLI ← FDAExplorer ← Client ← API Response
-    ↓
-AI Analysis (Optional)
-    ↓
-Final Response
+1. User asks: "What recalls has Medtronic had for pacemakers?"
+
+2. Agent receives question, decides to:
+   a. Resolve "pacemaker" → product codes
+   b. Search recalls with manufacturer filter
+
+3. Tool execution:
+   DeviceResolverTool("pacemaker") → ["DXY", "DTB", ...]
+   SearchRecallsTool(product_codes=["DXY"], manufacturer="Medtronic") → [recalls...]
+
+4. Agent synthesizes results into natural language response
+
+5. Response returned with token usage and cost (if available)
 ```
 
-### 2. Device Intelligence Flow
+### Device Resolution Flow
 
 ```
-Device Name → Enhanced Client → Multiple API Calls
-    ↓               ↓              ↓
-Analysis ← Risk Engine ← Aggregated Data
-    ↓               ↓
-Trends ← Trend Engine ← Historical Data
-    ↓               ↓
-Report ← Report Engine ← Combined Analysis
+1. Query: "surgical mask"
+
+2. GUDID SQLite search:
+   - Exact match on brand_name
+   - Fuzzy match on brand_name (Levenshtein)
+   - Full-text search on description
+   - Company name search
+
+3. Score and rank matches by confidence
+
+4. Return:
+   - Matched devices with product codes
+   - GMDN terms
+   - Primary DI (device identifier)
+   - Match type and confidence score
 ```
 
-### 3. Caching Strategy
+## Error Handling Strategy
 
-```
-Request → Cache Check → Hit? → Return Cached Data
-    ↓         ↓          ↓
-    No       Miss      API Call → Process → Cache → Return
-```
+1. **Tool errors**: Caught and returned as tool output (agent can retry or explain)
+2. **LLM errors**: Raised to caller with context
+3. **API rate limits**: Exponential backoff with jitter
+4. **Database errors**: Graceful degradation (skip tool, continue with others)
 
-## Security Architecture
+## Performance Considerations
 
-### 1. API Key Management
-- Environment variable storage
-- No hardcoded credentials
-- Rotation support
-- Audit logging
+- **Connection pooling**: Reuse HTTP connections to OpenFDA
+- **Response caching**: Cache OpenFDA responses (configurable TTL)
+- **Lazy loading**: Tools initialized only when needed
+- **Streaming**: Don't buffer entire response before sending
 
-### 2. Input Validation
-- Pydantic models for all inputs
-- SQL injection prevention
-- XSS protection
-- Rate limiting
+## Security
 
-### 3. Data Privacy
-- No sensitive data storage
-- PII filtering
-- Secure transmission (HTTPS/TLS)
-- Audit trails
-
-## Scalability Considerations
-
-### 1. Horizontal Scaling
-- Stateless application design
-- Load balancer compatible
-- Shared cache and database
-- Container-ready
-
-### 2. Performance Optimization
-- Async/await throughout
-- Connection pooling
-- Result caching
-- Lazy loading
-
-### 3. Resource Management
-- Memory-efficient streaming
-- Configurable timeouts
-- Circuit breakers
-- Graceful degradation
-
-## Deployment Architecture
-
-### 1. Development
-```
-Developer Machine
-├── Python Virtual Environment
-├── Local SQLite Database
-├── In-memory Cache
-└── Direct API Calls
-```
-
-### 2. Production (Docker)
-```
-Load Balancer
-├── App Container 1 (Web UI + API)
-├── App Container 2 (Web UI + API)
-└── App Container N (Web UI + API)
-    ↓
-Shared Services
-├── Redis Cache Cluster
-├── PostgreSQL Database
-└── Monitoring Stack
-```
-
-### 3. Production (Kubernetes)
-```
-Ingress Controller
-├── FDA Explorer Deployment (3 replicas)
-├── Redis StatefulSet
-├── PostgreSQL StatefulSet
-├── ConfigMaps & Secrets
-└── Monitoring (Prometheus/Grafana)
-```
-
-## Technology Stack
-
-### Backend
-- **Python 3.8+**: Core language
-- **FastAPI**: REST API framework
-- **Streamlit**: Web UI framework
-- **Click**: CLI framework
-- **asyncio**: Asynchronous programming
-- **aiohttp**: Async HTTP client
-- **Pydantic**: Data validation
-- **SQLAlchemy**: Database ORM
-
-### Data & Caching
-- **Redis**: Caching layer
-- **PostgreSQL**: Primary database
-- **SQLite**: Development database
-
-### AI & ML
-- **OpenAI API**: GPT models
-- **Anthropic API**: Claude models
-- **OpenRouter**: Multiple model access
-
-### Infrastructure
-- **Docker**: Containerization
-- **Kubernetes**: Orchestration
-- **nginx**: Load balancing
-- **Prometheus**: Monitoring
-- **Grafana**: Visualization
-
-### Development
-- **pytest**: Testing framework
-- **black**: Code formatting
-- **isort**: Import sorting
-- **flake8**: Linting
-- **mypy**: Type checking
-- **pre-commit**: Git hooks
-
-## Design Patterns
-
-### 1. Repository Pattern
-```python
-class FDARepository:
-    async def search_devices(self, query: str) -> List[Device]:
-        # Abstract data access
-```
-
-### 2. Factory Pattern
-```python
-class AIProviderFactory:
-    @staticmethod
-    def create(provider: str) -> AIProvider:
-        # Create appropriate AI provider
-```
-
-### 3. Observer Pattern
-```python
-class EventManager:
-    def notify_subscribers(self, event: Event):
-        # Notify all registered observers
-```
-
-### 4. Strategy Pattern
-```python
-class CacheStrategy:
-    async def get(self, key: str) -> Optional[Any]:
-        # Different caching strategies
-```
-
-## Configuration Architecture
-
-### 1. Configuration Hierarchy
-```
-1. Command-line arguments (highest priority)
-2. Environment variables
-3. Configuration file (.env, config.yaml)
-4. Default values (lowest priority)
-```
-
-### 2. Configuration Structure
-```yaml
-app:
-  name: "Enhanced FDA Explorer"
-  version: "1.0.0"
-  environment: "production"
-
-api:
-  host: "0.0.0.0"
-  port: 8000
-  workers: 4
-
-openfda:
-  api_key: "${FDA_API_KEY}"
-  timeout: 30
-  max_retries: 3
-
-ai:
-  provider: "openai"
-  model: "gpt-4"
-  api_key: "${AI_API_KEY}"
-
-database:
-  url: "${DATABASE_URL}"
-  pool_size: 10
-
-cache:
-  type: "redis"
-  url: "${REDIS_URL}"
-  ttl: 3600
-
-logging:
-  level: "INFO"
-  format: "json"
-```
-
-## Error Handling Architecture
-
-### 1. Error Hierarchy
-```python
-FDAExplorerError
-├── APIError
-│   ├── AuthenticationError
-│   ├── RateLimitError
-│   └── TimeoutError
-├── ValidationError
-├── ConfigurationError
-└── CacheError
-```
-
-### 2. Error Propagation
-```
-Low-level Error → Service Layer → Business Logic → Interface Layer
-      ↓              ↓              ↓              ↓
-   Log Error → Transform Error → Add Context → User-friendly Message
-```
-
-## Monitoring & Observability
-
-### 1. Metrics
-- Request latency
-- Error rates
-- API quotas
-- Cache hit rates
-- Database performance
-
-### 2. Logging
-- Structured JSON logging
-- Correlation IDs
-- Performance timings
-- Error details
-- Audit trails
-
-### 3. Health Checks
-- API endpoint health
-- Database connectivity
-- Cache availability
-- External service status
-
-## Future Architecture Considerations
-
-### 1. Microservices Migration
-- Search Service
-- AI Analysis Service
-- Report Generation Service
-- User Management Service
-
-### 2. Event-Driven Architecture
-- Message queues (RabbitMQ/Kafka)
-- Event sourcing
-- CQRS pattern
-
-### 3. Machine Learning Pipeline
-- Data preprocessing
-- Model training
-- Feature engineering
-- Prediction serving
-
-This architecture provides a solid foundation for current needs while maintaining flexibility for future enhancements and scaling requirements.
+- **No credentials in code**: All secrets via environment variables
+- **Input validation**: Pydantic models validate all inputs
+- **SQL injection prevention**: Parameterized queries for GUDID
+- **Rate limiting**: Configurable per-endpoint limits

@@ -67,6 +67,33 @@ body {
   opacity: 0.8;
 }
 
+.nav-links {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+.nav-link {
+  color: var(--gray);
+  text-decoration: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  transition: all 0.3s;
+  font-weight: 500;
+}
+
+.nav-link:hover {
+  color: var(--teal);
+  background: rgba(78, 205, 196, 0.1);
+}
+
+.nav-link.active {
+  color: var(--teal);
+  background: rgba(78, 205, 196, 0.15);
+  font-weight: 600;
+}
+
 /* Search Form - Organic Card */
 .search-form {
   background: white;

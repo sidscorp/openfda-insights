@@ -1,0 +1,302 @@
+.container {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border-radius: 16px;
+  padding: 24px;
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.container::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(
+    circle at 30% 80%,
+    rgba(78, 205, 196, 0.1) 0%,
+    transparent 50%
+  );
+  animation: pulse 8s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 32px;
+  position: relative;
+  z-index: 1;
+}
+
+.header h3 {
+  font-size: 24px;
+  margin: 0;
+  background: linear-gradient(to right, #4ecdc4, #45b7d1);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.query {
+  color: #a0a0a0;
+  margin: 8px 0 0 0;
+  font-style: italic;
+}
+
+.orchestrationView {
+  position: relative;
+  height: 500px;
+  margin: 32px 0;
+}
+
+.centralOrchestrator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+}
+
+.orchestratorNode {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 50%;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.orchestratorNode.completed {
+  animation: successPulse 0.6s ease-out;
+}
+
+@keyframes successPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.orchestratorNode .icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+}
+
+.orchestratorNode .name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.orchestratorNode .status {
+  font-size: 11px;
+  opacity: 0.8;
+  text-align: center;
+  padding: 0 10px;
+}
+
+.connectionLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.specialistAgent {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid;
+  border-radius: 12px;
+  padding: 16px;
+  width: 120px;
+  text-align: center;
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.specialistAgent.waiting {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+.specialistAgent.running {
+  animation: runningPulse 2s ease-in-out infinite;
+  box-shadow: 0 4px 20px rgba(78, 205, 196, 0.3);
+}
+
+.specialistAgent.completed {
+  background: rgba(78, 205, 196, 0.2);
+  border-color: #4ecdc4;
+  animation: completedBounce 0.5s ease-out;
+}
+
+.specialistAgent.failed {
+  background: rgba(255, 107, 107, 0.2);
+  border-color: #ff6b6b;
+}
+
+.specialistAgent.skipped {
+  display: none;
+}
+
+@keyframes runningPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes completedBounce {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.agentIcon {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+
+.agentName {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.agentStatus {
+  font-size: 11px;
+  opacity: 0.8;
+  margin-bottom: 8px;
+}
+
+.dataPoints {
+  font-size: 14px;
+  font-weight: 600;
+  color: #4ecdc4;
+  margin-top: 4px;
+}
+
+.progressBar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progressFill {
+  height: 100%;
+  background: #4ecdc4;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.progressFill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.3));
+  animation: shimmer 1s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-20px); }
+  100% { transform: translateX(0); }
+}
+
+.overallProgress {
+  margin: 32px 0;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.capabilities {
+  margin-top: 32px;
+}
+
+.capabilities h4 {
+  margin: 0 0 16px 0;
+  color: #a0a0a0;
+  font-size: 16px;
+}
+
+.capabilityGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.capabilityCard {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid;
+  border-radius: 8px;
+  padding: 16px;
+  transition: all 0.3s ease;
+}
+
+.capabilityCard:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+.capabilityHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.capabilityIcon {
+  font-size: 20px;
+}
+
+.capabilityName {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.capabilityDesc {
+  font-size: 12px;
+  color: #a0a0a0;
+  margin: 0 0 8px 0;
+}
+
+.capabilityList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 11px;
+}
+
+.capabilityList li {
+  padding: 4px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.capabilityList li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: #4ecdc4;
+}

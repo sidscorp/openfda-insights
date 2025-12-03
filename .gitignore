@@ -2,38 +2,84 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
 
 # Distribution / packaging
 build/
 dist/
 *.egg-info/
+.eggs/
 
 # Virtual environment
 venv/
+.venv/
+env/
 
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # IDEs and editors
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 
 # OS files
 .DS_Store
+Thumbs.db
 
-# pytest
+# Testing
 .pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
-# Jupyter notebooks
+# Jupyter
 .ipynb_checkpoints/
 
-# Logs and reports
+# Logs and temp files
 *.log
+*.tmp
+*.temp
+debug_output.txt
 
-# Cache files
+# Cache
 .cache/
+.mypy_cache/
+.ruff_cache/
+
+# Root markdown files (except README)
+/*.md
+!README.md
+
+# AI/Agentic tools
+.claude/
+.codex/
+.cursor/
+.aider*
+.continue/
+.copilot/
+.tabnine/
+.codeium/
+
+# Node (frontend)
+node_modules/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Data files (large)
+*.db
+*.sqlite
+*.sqlite3
+data/*.parquet
+data/*.csv
+
+# Secrets
+*.pem
+*.key
+credentials.json

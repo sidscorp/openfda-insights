@@ -1,22 +1,22 @@
 """
-Enhanced FDA Explorer - Next-generation FDA medical device data exploration platform
+Enhanced FDA Explorer - AI-powered FDA medical device data exploration
 
-This package provides a comprehensive platform for exploring FDA medical device data
-with production-ready reliability, AI-powered analysis, and multiple interface options.
+This package provides an intelligent agent for exploring FDA medical device data,
+combining GUDID device resolution with OpenFDA API queries.
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "Dr. Sidd Nambiar"
-__email__ = "sidd.nambiar@example.com"
 
-from .core import FDAExplorer
-from .client import EnhancedFDAClient
-from .ai import AIAnalysisEngine
-from .config import Config
+from .agent import FDAAgent
+from .tools import DeviceResolver
+from .llm_factory import LLMFactory
+from .config import Config, get_config
 
 __all__ = [
-    "FDAExplorer",
-    "EnhancedFDAClient", 
-    "AIAnalysisEngine",
+    "FDAAgent",
+    "DeviceResolver",
+    "LLMFactory",
     "Config",
+    "get_config",
 ]

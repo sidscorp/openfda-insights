@@ -406,6 +406,12 @@ class Config(BaseSettings):
     max_sample_size: int = Field(default=1000, env="MAX_SAMPLE_SIZE", ge=1, le=100000)
     default_date_range_months: int = Field(default=12, env="DEFAULT_DATE_RANGE_MONTHS", ge=1, le=120)
     max_date_range_months: int = Field(default=60, env="MAX_DATE_RANGE_MONTHS", ge=1, le=600)
+
+    # GUDID Database settings
+    gudid_db_path: str = Field(
+        default="/root/projects/analytics-projects/shared-data/gudid_full.db",
+        env="GUDID_DB_PATH"
+    )
     
     # Search settings
     search_timeout: int = Field(default=30, env="SEARCH_TIMEOUT", ge=1, le=300)
@@ -506,8 +512,10 @@ class Config(BaseSettings):
                 issues.append("WARNING: SSL verification should be enabled in production")
         
         # AI configuration validation
+        # Check both nested config and direct env vars (AI_API_KEY, OPENROUTER_API_KEY)
+        ai_key = self.ai.api_key or os.getenv("AI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
         if self.ai.provider in ["openai", "anthropic", "openrouter"]:
-            if not self.ai.api_key:
+            if not ai_key:
                 issues.append(f"WARNING: No API key configured for AI provider '{self.ai.provider}'. AI features will be disabled.")
         
         # Cache configuration validation
