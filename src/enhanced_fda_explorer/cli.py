@@ -146,6 +146,63 @@ def ask(ctx, question, provider, model, verbose, raw, as_json, session_id):
                 print(json.dumps(output, indent=2))
             return
 
+        if not verbose and not raw:
+            # Simple default mode - just show the final answer
+            final_response = None
+            all_ai_messages = []
+            tool_count = 0
+
+            with console.status("[bold green]Thinking...[/bold green]") as status:
+                for event in agent.stream(question, session_id=session_id):
+                    node_name = list(event.keys())[0] if event else "unknown"
+                    messages = event.get(node_name, {}).get("messages", [])
+
+                    for msg in messages:
+                        if isinstance(msg, AIMessage):
+                            all_ai_messages.append(msg)
+                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                for tool_call in msg.tool_calls:
+                                    tool_count += 1
+                                    tool_name = tool_call.get('name', 'unknown')
+                                    status.update(f"[bold green]Calling {tool_name}...[/bold green]")
+                            elif msg.content:
+                                final_response = msg
+
+            if final_response:
+                console.print(Panel(
+                    final_response.content,
+                    title="FDA Agent Response",
+                    border_style="green"
+                ))
+
+                total_input = 0
+                total_output = 0
+                total_cost = 0.0
+                model_name = ""
+                for msg in all_ai_messages:
+                    if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
+                        total_input += msg.usage_metadata.get("input_tokens", 0)
+                        total_output += msg.usage_metadata.get("output_tokens", 0)
+                    if hasattr(msg, 'response_metadata') and msg.response_metadata:
+                        model_name = msg.response_metadata.get("model_name", model_name)
+                        token_usage = msg.response_metadata.get("token_usage", {})
+                        if token_usage.get("cost"):
+                            total_cost += token_usage["cost"]
+
+                stats_parts = []
+                if model_name:
+                    stats_parts.append(f"Model: {model_name}")
+                if total_input or total_output:
+                    stats_parts.append(f"Tokens: {total_input:,} in / {total_output:,} out")
+                if total_cost > 0:
+                    stats_parts.append(f"Cost: ${total_cost:.4f}")
+                stats_parts.append(f"Tool calls: {tool_count}")
+                if stats_parts:
+                    console.print(f"[dim]{' | '.join(stats_parts)}[/dim]")
+            else:
+                console.print("[yellow]No response generated[/yellow]")
+            return
+
         if verbose or raw:
             console.print(f"[dim]Provider: {provider} | Model: {model or 'default'}[/dim]\n")
             console.print(Panel(question, title="Question", border_style="cyan"))
