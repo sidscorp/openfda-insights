@@ -139,7 +139,8 @@ class SearchEventsTool(BaseTool):
                 lines.append(f"  {problem}: {count}")
 
         lines.append("\nRECENT EVENTS:")
-        for i, event in enumerate(results[:3], 1):
+        # Show all fetched results; upstream pagination already respects the requested limit.
+        for i, event in enumerate(results, 1):
             date = event.get("date_received", "Unknown")
             event_type = event.get("event_type", "Unknown")
             devices = event.get("device", [])
