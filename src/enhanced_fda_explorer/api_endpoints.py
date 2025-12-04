@@ -125,6 +125,7 @@ class AgentAskRequest(BaseModel):
     question: str = Field(..., description="Question to ask the FDA agent")
     provider: str = Field(default="openrouter", description="LLM provider (openrouter, bedrock, ollama)")
     model: Optional[str] = Field(default=None, description="Model to use (defaults to provider default)")
+    session_id: Optional[str] = Field(default=None, description="Session ID for multi-turn conversations")
 
 
 class AgentAskResponse(BaseModel):
@@ -145,7 +146,7 @@ async def agent_ask(request: AgentAskRequest):
     """
     try:
         agent = FDAAgent(provider=request.provider, model=request.model)
-        response = agent.ask(request.question)
+        response = agent.ask(request.question, session_id=request.session_id)
         return AgentAskResponse(
             question=request.question,
             answer=response.content,
@@ -164,17 +165,19 @@ async def agent_ask(request: AgentAskRequest):
 async def agent_ask_get(
     question: str,
     provider: str = Query(default="openrouter"),
-    model: Optional[str] = Query(default=None)
+    model: Optional[str] = Query(default=None),
+    session_id: Optional[str] = Query(default=None)
 ):
     """GET endpoint for simple agent questions."""
-    return await agent_ask(AgentAskRequest(question=question, provider=provider, model=model))
+    return await agent_ask(AgentAskRequest(question=question, provider=provider, model=model, session_id=session_id))
 
 
 @app.get("/api/agent/stream/{question}")
 async def agent_stream(
     question: str,
     provider: str = Query(default="openrouter"),
-    model: Optional[str] = Query(default=None)
+    model: Optional[str] = Query(default=None),
+    session_id: Optional[str] = Query(default=None)
 ):
     """Stream FDA agent responses using SSE for real-time updates."""
     async def generate_events():
@@ -183,7 +186,7 @@ async def agent_stream(
 
             yield f"data: {json.dumps({'type': 'start', 'question': question})}\n\n"
 
-            for event in agent.stream(question):
+            for event in agent.stream(question, session_id=session_id):
                 node_name = list(event.keys())[0] if event else "unknown"
                 messages = event.get(node_name, {}).get("messages", [])
 
@@ -200,7 +203,7 @@ async def agent_stream(
                         else:
                             yield f"data: {json.dumps({'type': 'thinking', 'content': last_message.content[:200]})}\n\n"
 
-            final_result = agent.ask(question)
+            final_result = agent.ask(question, session_id=session_id)
             yield f"data: {json.dumps({'type': 'complete', 'answer': final_result.content, 'model': final_result.model, 'tokens': final_result.total_tokens})}\n\n"
 
         except Exception as e:

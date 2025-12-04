@@ -94,7 +94,16 @@ Both recalls and adverse events support direct country filtering:
 - Mask recalls from China: `search_recalls(query="mask", search_field="product", country="China")`
 - Mask adverse events from China: `search_events(product_code="FXX", country="China")`
 
-**NEVER pass "null" or empty string** - use the filter parameters instead.
+**NEVER pass "null" or empty string** - use the filter parameters instead, and only call search tools when you have a real query/product code/country to supply.
+
+## Disambiguation and Multi-Turn Behavior
+
+When a user asks about a broad device type (e.g., "mask", "pump", "catheter") and resolve_device returns multiple product code families:
+- Do NOT immediately search events/recalls/510k. First present the product code options (code, name, device count) and ask whether to:
+  1) search all codes, or 2) pick specific codes from the list.
+- If the user already said "all" or "any type", default to searching all codes. Otherwise, wait for their selection before calling search tools.
+- Keep the conversation multi-turn: remember the selected codes/manufacturers and use them in follow-up searches.
+- When reporting counts, only use numbers returned by tools or prior tool calls in this session. If a count is unavailable, state that it's not available rather than guessing.
 
 ## Conversation Context
 

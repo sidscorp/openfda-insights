@@ -3,13 +3,11 @@ Recalls Tool - Search FDA device recalls.
 """
 from typing import Type, Optional
 from collections import Counter
-import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-import requests
-import httpx
 
 from ...models.responses import RecallSearchResult, RecallRecord
+from ...openfda_client import OpenFDAClient
 
 
 class SearchRecallsInput(BaseModel):
@@ -41,65 +39,35 @@ class SearchRecallsTool(BaseTool):
 
     _api_key: Optional[str] = None
     _last_structured_result: Optional[RecallSearchResult] = None
+    _client: OpenFDAClient
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
+        self._client = OpenFDAClient(api_key=api_key)
 
     def get_last_structured_result(self) -> Optional[RecallSearchResult]:
         return self._last_structured_result
 
     def _run(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100, search_field: str = "both", country: str = "") -> str:
         try:
-            url = "https://api.fda.gov/device/enforcement.json"
-            search_parts = []
-
-            if query:
-                if search_field == "firm":
-                    search_parts.append(f'recalling_firm:"{query}"')
-                elif search_field == "product":
-                    search_parts.append(f'product_description:"{query}"')
-                else:
-                    search_parts.append(f'(product_description:"{query}" OR recalling_firm:"{query}")')
-
-            if country:
-                search_parts.append(f'country:"{country}"')
-
-            if date_from and date_to:
-                search_parts.append(f'recall_initiation_date:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'recall_initiation_date:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'recall_initiation_date:[* TO {date_to}]')
-
-            if not search_parts:
-                return "Error: Must provide either query or country parameter."
-
-            search = " AND ".join(search_parts)
-
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "recall_initiation_date:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
-
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
+            search = self._build_search(query, search_field, country, date_from, date_to)
+            data = self._client.get_paginated(
+                "device/enforcement.json",
+                params={"search": search},
+                limit=min(limit, 500),
+                sort="recall_initiation_date:desc",
+            )
 
             self._last_structured_result = self._to_structured(query, date_from, date_to, data)
-            return self._format_results(query, data)
+            return self._format_results(query or country, data)
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                self._last_structured_result = RecallSearchResult(
-                    query=query, date_from=date_from or None, date_to=date_to or None, total_found=0
-                )
-                return f"No recalls found for '{query}'."
+        except ValueError as e:
             self._last_structured_result = None
-            return f"FDA API error: {str(e)}"
+            return f"Error: {e}"
+        except Exception as e:
+            self._last_structured_result = None
+            return f"Error searching recalls: {str(e)}"
         except Exception as e:
             self._last_structured_result = None
             return f"Error searching recalls: {str(e)}"
@@ -204,60 +172,66 @@ class SearchRecallsTool(BaseTool):
 
     async def _arun(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100, search_field: str = "both", country: str = "") -> str:
         """Async version using httpx for non-blocking HTTP calls."""
-        start_time = time.time()
         try:
-            url = "https://api.fda.gov/device/enforcement.json"
-            search_parts = []
+            search = self._build_search(query, search_field, country, date_from, date_to)
+            data = await self._client.aget_paginated(
+                "device/enforcement.json",
+                params={"search": search},
+                limit=min(limit, 500),
+                sort="recall_initiation_date:desc",
+            )
 
-            if query:
-                if search_field == "firm":
-                    search_parts.append(f'recalling_firm:"{query}"')
-                elif search_field == "product":
-                    search_parts.append(f'product_description:"{query}"')
-                else:
-                    search_parts.append(f'(product_description:"{query}" OR recalling_firm:"{query}")')
-
-            if country:
-                search_parts.append(f'country:"{country}"')
-
-            if date_from and date_to:
-                search_parts.append(f'recall_initiation_date:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'recall_initiation_date:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'recall_initiation_date:[* TO {date_to}]')
-
-            if not search_parts:
-                return "Error: Must provide either query or country parameter."
-
-            search = " AND ".join(search_parts)
-
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "recall_initiation_date:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-
-            elapsed_ms = (time.time() - start_time) * 1000
             self._last_structured_result = self._to_structured(query, date_from, date_to, data)
-            result = self._format_results(query, data)
-            return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
+            result = self._format_results(query or country, data)
+            return result
 
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                self._last_structured_result = RecallSearchResult(
-                    query=query, date_from=date_from or None, date_to=date_to or None, total_found=0
-                )
-                return f"No recalls found for '{query}'."
+        except ValueError as e:
             self._last_structured_result = None
-            return f"FDA API error: {str(e)}"
+            return f"Error: {e}"
         except Exception as e:
             self._last_structured_result = None
             return f"Error searching recalls: {str(e)}"
+
+    def _build_search(
+        self,
+        query: str,
+        search_field: str,
+        country: str,
+        date_from: str,
+        date_to: str,
+    ) -> str:
+        search_parts = []
+
+        if query:
+            safe_query = query.replace('"', '\\"')
+            if search_field == "firm":
+                search_parts.append(f'recalling_firm:"{safe_query}"')
+            elif search_field == "product":
+                search_parts.append(f'product_description:"{safe_query}"')
+            else:
+                search_parts.append(
+                    f'(product_description:"{safe_query}" OR recalling_firm:"{safe_query}")'
+                )
+
+        if country:
+            search_parts.append(f'country:"{country}"')
+
+        if date_from and date_to:
+            self._validate_date(date_from)
+            self._validate_date(date_to)
+            search_parts.append(f"recall_initiation_date:[{date_from} TO {date_to}]")
+        elif date_from:
+            self._validate_date(date_from)
+            search_parts.append(f"recall_initiation_date:[{date_from} TO *]")
+        elif date_to:
+            self._validate_date(date_to)
+            search_parts.append(f"recall_initiation_date:[* TO {date_to}]")
+
+        if not search_parts:
+            raise ValueError("Must provide either query or country parameter.")
+
+        return " AND ".join(search_parts)
+
+    def _validate_date(self, date_str: str) -> None:
+        if date_str and (not date_str.isdigit() or len(date_str) != 8):
+            raise ValueError("Dates must be in YYYYMMDD format.")

@@ -3,13 +3,11 @@ Events Tool - Search FDA adverse event reports (MAUDE database).
 """
 from typing import Type, Optional
 from collections import Counter
-import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-import requests
-import httpx
 import re
 
+from ...openfda_client import OpenFDAClient
 
 COUNTRY_CODES = {
     "united states": "US", "usa": "US", "us": "US", "america": "US",
@@ -65,10 +63,12 @@ class SearchEventsTool(BaseTool):
     args_schema: Type[BaseModel] = SearchEventsInput
 
     _api_key: Optional[str] = None
+    _client: OpenFDAClient
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
+        self._client = OpenFDAClient(api_key=api_key)
 
     def _normalize_country(self, country: str) -> str:
         country_lower = country.lower().strip()
@@ -80,51 +80,19 @@ class SearchEventsTool(BaseTool):
 
     def _run(self, query: str = "", date_from: str = "", date_to: str = "", limit: int = 100, country: str = "", product_code: str = "") -> str:
         try:
-            url = "https://api.fda.gov/device/event.json"
-            search_parts = []
+            search = self._build_search(query, product_code, country, date_from, date_to)
+            data = self._client.get_paginated(
+                "device/event.json",
+                params={"search": search},
+                limit=min(limit, 500),
+                sort="date_received:desc",
+            )
+            return self._format_results(query or product_code or country, data)
 
-            if product_code:
-                search_parts.append(f'device.device_report_product_code:"{product_code.upper()}"')
-            elif query:
-                if re.match(r'^[A-Z]{3}$', query.upper()):
-                    search_parts.append(f'device.device_report_product_code:"{query.upper()}"')
-                else:
-                    search_parts.append(f'(device.brand_name:"{query}" OR device.generic_name:"{query}" OR device.manufacturer_d_name:"{query}")')
-
-            if country:
-                country_code = self._normalize_country(country)
-                search_parts.append(f'device.manufacturer_d_country:"{country_code}"')
-
-            if date_from and date_to:
-                search_parts.append(f'date_received:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'date_received:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'date_received:[* TO {date_to}]')
-
-            if not search_parts:
-                return "Error: Must provide query, country, or product_code parameter."
-
-            search = " AND ".join(search_parts)
-
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "date_received:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
-
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-
-            return self._format_results(query, data)
-
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                return f"No adverse events found for '{query}'."
-            return f"FDA API error: {str(e)}"
+        except ValueError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            return f"Error searching events: {str(e)}"
         except Exception as e:
             return f"Error searching events: {str(e)}"
 
@@ -186,57 +154,64 @@ class SearchEventsTool(BaseTool):
 
     async def _arun(self, query: str = "", date_from: str = "", date_to: str = "", limit: int = 100, country: str = "", product_code: str = "") -> str:
         """Async version using httpx for non-blocking HTTP calls."""
-        start_time = time.time()
         try:
-            url = "https://api.fda.gov/device/event.json"
-            search_parts = []
-
-            if product_code:
-                search_parts.append(f'device.device_report_product_code:"{product_code.upper()}"')
-            elif query:
-                if re.match(r'^[A-Z]{3}$', query.upper()):
-                    search_parts.append(f'device.device_report_product_code:"{query.upper()}"')
-                else:
-                    search_parts.append(f'(device.brand_name:"{query}" OR device.generic_name:"{query}" OR device.manufacturer_d_name:"{query}")')
-
-            if country:
-                country_code = self._normalize_country(country)
-                search_parts.append(f'device.manufacturer_d_country:"{country_code}"')
-
-            if date_from and date_to:
-                search_parts.append(f'date_received:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'date_received:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'date_received:[* TO {date_to}]')
-
-            if not search_parts:
-                return "Error: Must provide query, country, or product_code parameter."
-
-            search = " AND ".join(search_parts)
-
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "date_received:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-
-            elapsed_ms = (time.time() - start_time) * 1000
+            search = self._build_search(query, product_code, country, date_from, date_to)
+            data = await self._client.aget_paginated(
+                "device/event.json",
+                params={"search": search},
+                limit=min(limit, 500),
+                sort="date_received:desc",
+            )
             search_desc = product_code or query or country
             result = self._format_results(search_desc, data)
-            return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
+            return result
 
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                search_desc = product_code or query or country
-                return f"No adverse events found for '{search_desc}'."
-            return f"FDA API error: {str(e)}"
+        except ValueError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error searching events: {str(e)}"
+
+    def _build_search(
+        self,
+        query: str,
+        product_code: str,
+        country: str,
+        date_from: str,
+        date_to: str,
+    ) -> str:
+        search_parts = []
+
+        if product_code:
+            search_parts.append(f'device.device_report_product_code:"{product_code.upper()}"')
+        elif query:
+            if re.match(r"^[A-Z]{3}$", query.upper()):
+                search_parts.append(f'device.device_report_product_code:"{query.upper()}"')
+            else:
+                safe_query = query.replace('"', '\\"')
+                search_parts.append(
+                    f'(device.brand_name:"{safe_query}" OR device.generic_name:"{safe_query}" OR device.manufacturer_d_name:"{safe_query}")'
+                )
+
+        if country:
+            country_code = self._normalize_country(country)
+            search_parts.append(f'device.manufacturer_d_country:"{country_code}"')
+
+        if date_from and date_to:
+            self._validate_date(date_from)
+            self._validate_date(date_to)
+            search_parts.append(f"date_received:[{date_from} TO {date_to}]")
+        elif date_from:
+            self._validate_date(date_from)
+            search_parts.append(f"date_received:[{date_from} TO *]")
+        elif date_to:
+            self._validate_date(date_to)
+            search_parts.append(f"date_received:[* TO {date_to}]")
+
+        if not search_parts:
+            raise ValueError("Must provide query, country, or product_code parameter.")
+
+        return " AND ".join(search_parts)
+
+    def _validate_date(self, date_str: str) -> None:
+        if date_str and not re.match(r"^\d{8}$", date_str):
+            raise ValueError("Dates must be in YYYYMMDD format.")

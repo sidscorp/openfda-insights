@@ -10,7 +10,7 @@ class LLMFactory:
     """Central factory for creating LLM instances across providers."""
 
     PROVIDER_DEFAULTS = {
-        "openrouter": "anthropic/claude-3-haiku",
+        "openrouter": "openai/gpt-4o",
         "bedrock": "anthropic.claude-3-haiku-20240307-v1:0",
         "ollama": "llama3.1",
     }
