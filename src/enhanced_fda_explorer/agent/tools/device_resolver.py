@@ -1,18 +1,25 @@
 """
 Device Resolver Tool - GUDID database lookup for device identification.
 """
-from typing import Type, Optional
+from typing import Type, Optional, Callable
+import logging
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 import json
+import time
 
 from ...tools.device_resolver import DeviceResolver
 from ...config import get_config
+from ...models.responses import (
+    ResolvedEntities, ProductCodeInfo, ManufacturerInfo, DeviceInfo
+)
+
+logger = logging.getLogger("fda_agent.device_resolver")
 
 
 class DeviceResolverInput(BaseModel):
     query: str = Field(description="Device name, brand, company, or product code to search for")
-    limit: int = Field(default=100, description="Maximum number of results to return")
+    limit: int = Field(default=500, description="Maximum number of results to return")
 
 
 class DeviceResolverTool(BaseTool):
@@ -24,6 +31,8 @@ class DeviceResolverTool(BaseTool):
 
     _db_path: str = ""
     _resolver: Optional[DeviceResolver] = None
+    _last_structured_result: Optional[ResolvedEntities] = None
+    _progress_callback: Optional[Callable[[str], None]] = None
 
     def __init__(self, db_path: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
@@ -31,7 +40,21 @@ class DeviceResolverTool(BaseTool):
         self._db_path = db_path or config.gudid_db_path
         self._resolver = DeviceResolver(self._db_path)
 
-    def _run(self, query: str, limit: int = 100) -> str:
+    def set_progress_callback(self, callback: Optional[Callable[[str], None]]):
+        """Set a callback to receive progress updates during resolution."""
+        self._progress_callback = callback
+
+    def get_last_structured_result(self) -> Optional[ResolvedEntities]:
+        return self._last_structured_result
+
+    def _emit_progress(self, step: str, count: int):
+        """Emit progress update via callback and logger."""
+        msg = f"Searching {step}... ({count} matches so far)"
+        logger.info(msg)
+        if self._progress_callback:
+            self._progress_callback(msg)
+
+    def _run(self, query: str, limit: int = 500) -> str:
         try:
             if isinstance(query, str) and query.startswith('{'):
                 params = json.loads(query)
@@ -41,17 +64,75 @@ class DeviceResolverTool(BaseTool):
             if not self._resolver.conn:
                 self._resolver.connect()
 
-            response = self._resolver.resolve(query, limit=limit, fuzzy=True)
+            start_time = time.time()
+            response = self._resolver.resolve(query, limit=limit, fuzzy=True, progress_callback=self._emit_progress)
+            execution_time = (time.time() - start_time) * 1000
+
+            self._last_structured_result = self._to_structured(query, response, execution_time)
             return self._format_results(query, response)
 
         except Exception as e:
+            self._last_structured_result = None
             return f"Error resolving device: {str(e)}"
+
+    def _to_structured(self, query: str, response, execution_time: float) -> ResolvedEntities:
+        product_code_info = {}
+        company_counts = {}
+
+        for match in response.matches:
+            for pc in match.device.product_codes:
+                if pc.product_code not in product_code_info:
+                    product_code_info[pc.product_code] = {
+                        "name": pc.product_code_name,
+                        "count": 0
+                    }
+                product_code_info[pc.product_code]["count"] += 1
+
+            if match.device.company_name:
+                company_counts[match.device.company_name] = company_counts.get(match.device.company_name, 0) + 1
+
+        product_codes = [
+            ProductCodeInfo(
+                code=code,
+                name=info["name"],
+                device_count=info["count"]
+            )
+            for code, info in sorted(product_code_info.items(), key=lambda x: x[1]["count"], reverse=True)
+        ]
+
+        manufacturers = [
+            ManufacturerInfo(name=name, device_count=count)
+            for name, count in sorted(company_counts.items(), key=lambda x: x[1], reverse=True)
+        ]
+
+        devices = [
+            DeviceInfo(
+                brand_name=m.device.brand_name or "",
+                company_name=m.device.company_name or "",
+                device_description=m.device.device_description,
+                product_codes=m.device.get_product_codes(),
+                primary_di=m.device.primary_di,
+                confidence=m.confidence,
+                match_field=m.match_field
+            )
+            for m in response.matches[:100]
+        ]
+
+        return ResolvedEntities(
+            query=query,
+            product_codes=product_codes,
+            manufacturers=manufacturers,
+            devices=devices,
+            total_devices_matched=response.total_matches,
+            resolution_time_ms=execution_time
+        )
 
     def _format_results(self, query: str, response) -> str:
         if response.total_matches == 0:
             return f"No devices found matching '{query}'."
 
-        lines = [f"Found {response.total_matches} devices matching '{query}':\n"]
+        time_str = f" (searched in {response.execution_time_ms:.0f}ms)" if response.execution_time_ms else ""
+        lines = [f"Found {response.total_matches} devices matching '{query}'{time_str}:\n"]
 
         product_code_info = {}
         company_counts = {}
@@ -136,5 +217,5 @@ class DeviceResolverTool(BaseTool):
 
         return "\n".join(lines)
 
-    async def _arun(self, query: str, limit: int = 100) -> str:
+    async def _arun(self, query: str, limit: int = 500) -> str:
         return self._run(query, limit)

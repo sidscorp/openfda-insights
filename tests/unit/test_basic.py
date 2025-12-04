@@ -7,6 +7,7 @@ import asyncio
 import sys
 import os
 from datetime import datetime
+import pytest
 
 # Add src to path for testing
 sys.path.insert(0, 'src')
@@ -151,26 +152,27 @@ def test_core_explorer():
         print(f"❌ Core Explorer test failed: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_async_functionality():
     """Test async functionality"""
     print("\n⚡ Testing Async Functionality...")
-    
+
     try:
         from enhanced_fda_explorer.core import FDAExplorer
         from enhanced_fda_explorer.config import get_config
-        
+
         config = get_config()
         explorer = FDAExplorer(config)
-        
+
         # Test that async methods exist and are callable
         # Note: We're not actually calling them to avoid API calls in basic test
         assert asyncio.iscoroutinefunction(explorer.search)
         assert asyncio.iscoroutinefunction(explorer.get_device_intelligence)
         print("✅ Async methods are properly defined")
-        
+
         explorer.close()
         return True
-        
+
     except Exception as e:
         print(f"❌ Async test failed: {e}")
         return False

@@ -204,13 +204,15 @@ class DeviceResolver:
 
         return matches
 
-    def search_fuzzy(self, query: str, min_confidence: float = 0.7, limit: int = 100) -> List[DeviceMatch]:
+    def search_fuzzy(self, query: str, min_confidence: float = 0.7, limit: int = 100, progress_callback=None) -> List[DeviceMatch]:
         """Search for fuzzy matches across text fields."""
         if not self.conn:
             self.connect()
 
         matches = []
 
+        if progress_callback:
+            progress_callback("brand names", len(matches))
         # Search brand name (fuzzy)
         brand_results = self.conn.execute("""
             SELECT * FROM devices
@@ -236,6 +238,8 @@ class DeviceResolver:
                     confidence=similarity
                 ))
 
+        if progress_callback:
+            progress_callback("device descriptions", len(matches))
         # Search device description (fuzzy) with better relevance ordering
         desc_results = self.conn.execute("""
             SELECT * FROM devices
@@ -270,6 +274,8 @@ class DeviceResolver:
                 confidence=confidence
             ))
 
+        if progress_callback:
+            progress_callback("company names", len(matches))
         # Search company name (fuzzy)
         company_results = self.conn.execute("""
             SELECT * FROM devices
@@ -291,6 +297,8 @@ class DeviceResolver:
                     confidence=similarity
                 ))
 
+        if progress_callback:
+            progress_callback("GMDN terms", len(matches))
         # Search GMDN terms (fuzzy)
         gmdn_results = self.conn.execute("""
             SELECT DISTINCT d.* FROM devices d
@@ -321,6 +329,8 @@ class DeviceResolver:
                     confidence=confidence
                 ))
 
+        if progress_callback:
+            progress_callback("product codes", len(matches))
         # Search product code names (fuzzy)
         product_code_results = self.conn.execute("""
             SELECT DISTINCT d.*, pc.product_code, pc.product_code_name
@@ -345,7 +355,19 @@ class DeviceResolver:
 
         return matches
 
-    def resolve(self, query: str, limit: int = 100, fuzzy: bool = True, min_confidence: float = 0.7) -> ResolverResponse:
+    def _normalize_query(self, query: str) -> list[str]:
+        """Generate query variants to improve search coverage."""
+        variants = [query]
+        q_lower = query.lower().strip()
+        if q_lower.endswith('s') and len(q_lower) > 3:
+            variants.append(q_lower[:-1])
+        elif not q_lower.endswith('s'):
+            variants.append(q_lower + 's')
+        if q_lower.endswith('es') and len(q_lower) > 4:
+            variants.append(q_lower[:-2])
+        return list(set(variants))
+
+    def resolve(self, query: str, limit: int = 100, fuzzy: bool = True, min_confidence: float = 0.7, progress_callback=None) -> ResolverResponse:
         """
         Main resolve method that combines exact and fuzzy matching.
 
@@ -354,6 +376,7 @@ class DeviceResolver:
             limit: Maximum number of results
             fuzzy: Whether to include fuzzy matches
             min_confidence: Minimum confidence score for fuzzy matches
+            progress_callback: Optional callback function(step: str, count: int) for progress updates
 
         Returns:
             ResolverResponse with all matching devices
@@ -362,44 +385,38 @@ class DeviceResolver:
             self.connect()
 
         start_time = time.time()
+        query_variants = self._normalize_query(query)
 
-        # First try exact matches
-        exact_matches = self.search_exact(query, limit)
+        all_matches = []
+        for variant in query_variants:
+            if progress_callback:
+                progress_callback("exact matches", len(all_matches))
+            exact_matches = self.search_exact(variant, limit)
+            all_matches.extend(exact_matches)
+            if fuzzy:
+                if progress_callback:
+                    progress_callback("fuzzy matches", len(all_matches))
+                fuzzy_matches = self.search_fuzzy(variant, min_confidence, limit * 2, progress_callback=progress_callback)
+                all_matches.extend(fuzzy_matches)
 
-        # Then add fuzzy matches if enabled and we haven't hit the limit
-        fuzzy_matches = []
-        if fuzzy and len(exact_matches) < limit:
-            # Search for more results to account for deduplication
-            remaining_limit = (limit - len(exact_matches)) * 3  # Get 3x to account for duplicates
-            fuzzy_matches = self.search_fuzzy(query, min_confidence, remaining_limit)
-
-        # Combine and deduplicate results
-        # Use a composite key of company + brand + product_code to avoid showing duplicates
-        all_matches = exact_matches + fuzzy_matches
         seen_combinations = set()
         unique_matches = []
 
         for match in all_matches:
-            # Create a composite key to avoid showing same product multiple times
             product_codes = tuple(sorted(match.device.get_product_codes()))
             key = (
                 match.device.company_name,
                 match.device.brand_name,
                 product_codes
             )
-
-            # Also track device keys to ensure we don't show exact duplicates
             if key not in seen_combinations:
                 seen_combinations.add(key)
                 unique_matches.append(match)
 
-        # Sort by confidence
         unique_matches.sort(key=lambda x: x.confidence, reverse=True)
-
-        # Limit final results
         unique_matches = unique_matches[:limit]
 
-        execution_time = (time.time() - start_time) * 1000  # Convert to ms
+        execution_time = (time.time() - start_time) * 1000
 
         search_fields = [
             "brand_name", "company_name", "device_description",

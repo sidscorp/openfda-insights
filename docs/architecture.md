@@ -17,20 +17,30 @@ This document explains the engineering choices behind the FDA Explorer system.
 ┌─────────────────────────────────────────────────────────────┐
 │                      FDA Agent (LangGraph)                   │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │                    StateGraph Workflow                  ││
+│  │               StateGraph with Checkpointer              ││
 │  │  [User Question] → [Agent] ⟷ [Tools] → [Response]      ││
+│  │         ↑                                               ││
+│  │         └── ResolverContext (shared state) ◄────────────┘│
 │  └─────────────────────────────────────────────────────────┘│
 │                              │                               │
 │  ┌───────────────────────────┼───────────────────────────┐  │
-│  │                     7 Agent Tools                      │  │
-│  │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐   │  │
-│  │ │ Device   │ │ Events   │ │ Recalls  │ │  510(k)  │   │  │
-│  │ │ Resolver │ │ Search   │ │ Search   │ │  Search  │   │  │
-│  │ └──────────┘ └──────────┘ └──────────┘ └──────────┘   │  │
-│  │ ┌──────────┐ ┌──────────┐ ┌──────────┐                │  │
-│  │ │   PMA    │ │  Class.  │ │   UDI    │                │  │
-│  │ │  Search  │ │  Search  │ │  Search  │                │  │
-│  │ └──────────┘ └──────────┘ └──────────┘                │  │
+│  │              10 Agent Tools (Async-Enabled)            │  │
+│  │                                                        │  │
+│  │  RESOLVERS (populate shared context):                  │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐               │  │
+│  │  │ Device   │ │ Manufac. │ │ Location │               │  │
+│  │  │ Resolver │ │ Resolver │ │ Resolver │               │  │
+│  │  └──────────┘ └──────────┘ └──────────┘               │  │
+│  │                                                        │  │
+│  │  SEARCHERS (query FDA databases):                      │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │  │
+│  │  │ Events   │ │ Recalls  │ │  510(k)  │ │   PMA    │  │  │
+│  │  │ Search   │ │ Search   │ │  Search  │ │  Search  │  │  │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘  │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐               │  │
+│  │  │  Class.  │ │   UDI    │ │ Regist.  │               │  │
+│  │  │  Search  │ │  Search  │ │  Search  │               │  │
+│  │  └──────────┘ └──────────┘ └──────────┘               │  │
 │  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
         │                              │
@@ -39,7 +49,7 @@ This document explains the engineering choices behind the FDA Explorer system.
 │    LLM Factory    │    │           Data Sources              │
 │ ┌───────────────┐ │    │ ┌──────────┐  ┌─────────────────┐  │
 │ │  OpenRouter   │ │    │ │  GUDID   │  │   OpenFDA API   │  │
-│ │    Bedrock    │ │    │ │ (SQLite) │  │  (6 endpoints)  │  │
+│ │    Bedrock    │ │    │ │ (SQLite) │  │  (7 endpoints)  │  │
 │ │    Ollama     │ │    │ └──────────┘  └─────────────────┘  │
 │ └───────────────┘ │    └────────────────────────────────────┘
 └───────────────────┘
@@ -102,26 +112,43 @@ LLMFactory.create(provider="ollama", model="llama3.1")
 
 **Schema design**: Denormalized for query speed over storage efficiency.
 
-### 5. Tool Design: Focused Single-Purpose Tools
+### 5. Tool Design: Resolvers vs Searchers
 
-**Decision**: Each tool does one thing well with structured output.
+**Decision**: Separate tools into two categories with distinct responsibilities.
 
 **Why**:
-- **LLM understanding**: Simpler tool descriptions = better tool selection
-- **Composability**: Agent can combine tools for complex queries
-- **Testability**: Each tool can be unit tested independently
-- **Error isolation**: Tool failures don't cascade
+- **Resolvers** translate user concepts into FDA-specific identifiers
+- **Searchers** query FDA databases using those identifiers
+- This separation enables the LLM to chain tools logically (resolve first, then search)
+- Resolvers populate shared state that searchers can reference
 
-**The 7 tools**:
-| Tool | Purpose | Data Source |
-|------|---------|-------------|
-| `DeviceResolverTool` | Map names → FDA codes | GUDID (local) |
-| `SearchEventsTool` | Adverse events | OpenFDA |
-| `SearchRecallsTool` | Product recalls | OpenFDA |
-| `Search510kTool` | 510(k) clearances | OpenFDA |
-| `SearchPMATool` | PMA approvals | OpenFDA |
-| `SearchClassificationsTool` | Device classifications | OpenFDA |
-| `SearchUDITool` | UDI records | OpenFDA |
+**Tool Categories**:
+
+| Category | Tool | Purpose | Data Source | Populates Context |
+|----------|------|---------|-------------|-------------------|
+| **Resolver** | `resolve_device` | Device names → product codes | GUDID (local) | ✅ `ResolvedEntities` |
+| **Resolver** | `resolve_manufacturer` | Company names → FDA firm variations | OpenFDA | ✅ `ManufacturerInfo[]` |
+| **Resolver** | `resolve_location` | Geographic location → manufacturers | OpenFDA | ✅ `LocationContext` |
+| **Searcher** | `search_events` | Adverse events (MAUDE) | OpenFDA | ❌ |
+| **Searcher** | `search_recalls` | Product recalls | OpenFDA | ✅ `RecallSearchResult` |
+| **Searcher** | `search_510k` | 510(k) clearances | OpenFDA | ❌ |
+| **Searcher** | `search_pma` | PMA approvals | OpenFDA | ❌ |
+| **Searcher** | `search_classifications` | Device classifications | OpenFDA | ❌ |
+| **Searcher** | `search_udi` | UDI records | OpenFDA | ❌ |
+| **Searcher** | `search_registrations` | Establishment registrations | OpenFDA | ❌ |
+
+**Resolver → Searcher Pattern**:
+```
+User: "What recalls are there for surgical masks?"
+
+1. Agent calls resolve_device("surgical masks")
+   → Returns product codes: FXX, MSH, OUK, etc.
+   → Populates ResolverContext.devices
+
+2. Agent calls search_recalls(query="surgical mask")
+   → Uses natural language (recalls don't support product codes)
+   → Returns recall records
+```
 
 ### 6. FastAPI with SSE Streaming
 
@@ -201,6 +228,61 @@ LLMFactory.create(provider="ollama", model="llama3.1")
    - Match type and confidence score
 ```
 
+## Shared State Architecture
+
+### ResolverContext
+
+**Decision**: Resolver tools populate a shared `ResolverContext` in the agent state.
+
+**Why**:
+- Resolvers extract structured data (product codes, manufacturer names, locations)
+- This data should persist across the conversation for follow-up queries
+- Search tools can potentially reference this context for auto-completion
+
+**State Structure**:
+```python
+class ResolverContext(TypedDict, total=False):
+    devices: Optional[ResolvedEntities]      # From resolve_device
+    manufacturers: Optional[list[ManufacturerInfo]]  # From resolve_manufacturer
+    location: Optional[LocationContext]      # From resolve_location
+
+class AgentState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], operator.add]
+    resolver_context: Annotated[ResolverContext, _merge_context]
+    session_id: Optional[str]
+```
+
+**ContextAwareToolNode**:
+After executing tools, the node extracts structured results from resolvers:
+```python
+def _extract_resolver_context(self) -> Optional[ResolverContext]:
+    context = {}
+    for tool_name, tool in self.resolver_tools.items():
+        if hasattr(tool, 'get_last_structured_result'):
+            result = tool.get_last_structured_result()
+            if result:
+                context[self._context_key(tool_name)] = result
+    return context
+```
+
+### Session Persistence
+
+**Decision**: Use LangGraph's `MemorySaver` checkpointer for multi-turn conversations.
+
+**Why**:
+- Chat UI needs state to persist across HTTP requests
+- Follow-up questions should reference previous resolver results
+- Session can be cleared when user starts a new topic
+
+**Usage**:
+```python
+# With session persistence
+response = agent.ask("What devices are made in China?", session_id="user-123")
+# ... later ...
+response = agent.ask("Any recalls for those?", session_id="user-123")
+# Agent can reference the Chinese manufacturers from previous turn
+```
+
 ## Error Handling Strategy
 
 1. **Tool errors**: Caught and returned as tool output (agent can retry or explain)
@@ -210,10 +292,37 @@ LLMFactory.create(provider="ollama", model="llama3.1")
 
 ## Performance Considerations
 
+- **Async HTTP with httpx**: All tools implement both sync (`_run`) and async (`_arun`) methods
+- **Concurrent tool execution**: When the LLM requests multiple tools, `ContextAwareToolNode.ainvoke()` runs them in parallel via `asyncio.gather()`
 - **Connection pooling**: Reuse HTTP connections to OpenFDA
 - **Response caching**: Cache OpenFDA responses (configurable TTL)
 - **Lazy loading**: Tools initialized only when needed
 - **Streaming**: Don't buffer entire response before sending
+
+### Async Architecture
+
+**Decision**: Implement async HTTP in all tools using `httpx.AsyncClient`.
+
+**Why**:
+- When the LLM calls multiple tools (e.g., searching 5 manufacturers for recalls), sequential HTTP calls are slow
+- Async execution runs all HTTP requests concurrently, reducing latency by 2-3x for multi-tool queries
+- The `_arun` methods mirror `_run` but use non-blocking I/O
+
+**Implementation**:
+```python
+# In ContextAwareToolNode.ainvoke():
+tool_messages = await asyncio.gather(*[
+    execute_tool(tc) for tc in last_message.tool_calls
+])
+
+# Each tool's _arun method:
+async with httpx.AsyncClient(timeout=30.0) as client:
+    response = await client.get(url, params=params)
+```
+
+**Agent methods**:
+- `ask()` / `stream()` - Synchronous execution
+- `ask_async()` / `stream_async()` - Async execution with concurrent tool calls
 
 ## Security
 

@@ -3,6 +3,7 @@ Command Line Interface for Enhanced FDA Explorer
 """
 
 import json
+import logging
 import sys
 from typing import Optional
 
@@ -14,8 +15,31 @@ from rich.json import JSON
 
 from .config import load_config, get_config, print_config_validation
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("numexpr").setLevel(logging.WARNING)
+logging.getLogger("fda_agent").setLevel(logging.WARNING)
 
 console = Console()
+stderr_console = Console(stderr=True)
+
+
+class StatusHandler(logging.Handler):
+    """Logging handler that updates a Rich status spinner."""
+    def __init__(self, status=None):
+        super().__init__()
+        self.status = status
+        self.setLevel(logging.INFO)
+
+    def emit(self, record):
+        if self.status:
+            self.status.update(f"[bold green]{record.getMessage()}[/bold green]")
+
+
+def get_console(ctx):
+    """Get appropriate console - stderr if JSON mode, stdout otherwise."""
+    if ctx.obj.get('json_mode'):
+        return stderr_console
+    return console
 
 
 @click.group()
@@ -28,9 +52,11 @@ console = Console()
 def cli(ctx, config, debug, api_key, validate_config, skip_validation):
     """Enhanced FDA Explorer CLI - AI-powered FDA data exploration"""
     ctx.ensure_object(dict)
+    ctx.obj['json_mode'] = '--json' in sys.argv
 
     try:
         validate_startup = not skip_validation
+        out = get_console(ctx)
 
         if config:
             ctx.obj['config'] = load_config(config, validate_startup=validate_startup)
@@ -44,19 +70,19 @@ def cli(ctx, config, debug, api_key, validate_config, skip_validation):
             ctx.obj['config'].debug = True
 
         if validate_config:
-            console.print("\n[bold blue]Configuration Validation Report[/bold blue]\n")
+            out.print("\n[bold blue]Configuration Validation Report[/bold blue]\n")
             print_config_validation()
             sys.exit(0)
 
         if not skip_validation:
             summary = ctx.obj['config'].get_validation_summary()
             if summary["warnings"] or summary["info"]:
-                console.print("\n[yellow]Configuration Validation Warnings:[/yellow]")
+                out.print("\n[yellow]Configuration Validation Warnings:[/yellow]")
                 for warning in summary["warnings"]:
-                    console.print(f"  ⚠️  {warning}")
+                    out.print(f"  [yellow]Warning:[/yellow] {warning}")
                 for info in summary["info"]:
-                    console.print(f"  ℹ️  {info}")
-                console.print()
+                    out.print(f"  [dim]Info:[/dim] {info}")
+                out.print()
 
     except ValueError as e:
         console.print(f"\n[red]Configuration Error:[/red] {e}")
@@ -76,8 +102,10 @@ def cli(ctx, config, debug, api_key, validate_config, skip_validation):
               help='LLM provider to use')
 @click.option('--model', '-m', default=None, help='Model to use (provider-specific)')
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output including tool calls')
+@click.option('--raw', '-r', is_flag=True, help='Show raw tool results without LLM summarization')
+@click.option('--json', 'as_json', is_flag=True, help='Output full structured response as JSON')
 @click.pass_context
-def ask(ctx, question, provider, model, verbose):
+def ask(ctx, question, provider, model, verbose, raw, as_json):
     """Ask the FDA Intelligence Agent a question.
 
     The agent uses tools to search FDA databases and synthesize answers.
@@ -90,57 +118,211 @@ def ask(ctx, question, provider, model, verbose):
         fda ask --provider bedrock "What is the regulatory classification for N95 respirators?"
     """
     from .agent import FDAAgent
+    from langchain_core.messages import AIMessage, ToolMessage
 
-    with console.status("[bold green]Thinking...[/bold green]") as status:
-        try:
-            agent = FDAAgent(provider=provider, model=model)
+    try:
+        agent = FDAAgent(provider=provider, model=model)
 
-            if verbose:
-                console.print(f"[dim]Provider: {provider} | Model: {model or 'default'}[/dim]\n")
+        if as_json:
+            stderr_console = Console(stderr=True)
+            with stderr_console.status("[bold green]Thinking...[/bold green]"):
+                response = agent.ask(question)
 
+            if response.structured:
+                print(response.structured.model_dump_json(indent=2))
+            else:
+                output = {
+                    "summary": response.content,
+                    "model": response.model,
+                    "token_usage": {
+                        "input_tokens": response.input_tokens,
+                        "output_tokens": response.output_tokens,
+                        "total_tokens": response.total_tokens,
+                        "cost_usd": response.cost
+                    }
+                }
+                print(json.dumps(output, indent=2))
+            return
+
+        if verbose or raw:
+            console.print(f"[dim]Provider: {provider} | Model: {model or 'default'}[/dim]\n")
+            console.print(Panel(question, title="Question", border_style="cyan"))
+            console.print()
+
+            final_response = None
+            tool_calls_made = []
+            tool_results = []
+            all_ai_messages = []
+
+            status = console.status("[bold green]Thinking...[/bold green]")
+            status_handler = StatusHandler(status)
+            fda_logger = logging.getLogger("fda_agent")
+            fda_logger.addHandler(status_handler)
+            fda_logger.setLevel(logging.INFO)
+            fda_logger.propagate = False
+
+            status.start()
+            try:
                 for event in agent.stream(question):
                     node_name = list(event.keys())[0] if event else "unknown"
                     messages = event.get(node_name, {}).get("messages", [])
 
-                    if messages:
-                        last_message = messages[-1]
+                    for msg in messages:
+                        if isinstance(msg, AIMessage):
+                            all_ai_messages.append(msg)
+                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                for tool_call in msg.tool_calls:
+                                    tool_calls_made.append(tool_call)
+                                    tool_name = tool_call.get('name', 'unknown')
+                                    status.update(f"[bold green]Calling {tool_name}...[/bold green]")
+                            elif msg.content:
+                                final_response = msg
 
-                        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                            for tool_call in last_message.tool_calls:
-                                console.print(f"[blue]Tool:[/blue] {tool_call['name']}")
-                                console.print(f"[dim]{tool_call['args']}[/dim]\n")
+                        elif isinstance(msg, ToolMessage):
+                            tool_results.append({
+                                "tool_call_id": msg.tool_call_id,
+                                "content": msg.content
+                            })
+                            status.update(f"[bold green]Processing results ({len(tool_results)} tool calls complete)...[/bold green]")
+            finally:
+                fda_logger.removeHandler(status_handler)
+                fda_logger.propagate = True
+                status.stop()
 
-                        elif hasattr(last_message, 'content') and last_message.content:
-                            if node_name == "tools":
-                                content_preview = last_message.content[:300]
-                                if len(last_message.content) > 300:
-                                    content_preview += "..."
-                                console.print(f"[green]Result:[/green] {content_preview}\n")
+            if verbose:
+                for i, tool_call in enumerate(tool_calls_made):
+                    console.print(Panel(
+                        f"[bold]{tool_call['name']}[/bold]\n\n"
+                        f"[dim]Arguments:[/dim]\n{json.dumps(tool_call['args'], indent=2)}",
+                        title=f"Tool Call {i+1}",
+                        border_style="blue"
+                    ))
 
-            response = agent.ask(question)
+                    if i < len(tool_results):
+                        result = tool_results[i]
+                        console.print(Panel(
+                            result["content"],
+                            title=f"Tool Result {i+1}",
+                            border_style="green"
+                        ))
+                    console.print()
 
-        except Exception as e:
-            console.print(f"[red]Error:[/red] {str(e)}")
-            if ctx.obj.get('config') and hasattr(ctx.obj['config'], 'debug') and ctx.obj['config'].debug:
-                import traceback
-                console.print(traceback.format_exc())
-            return
+            if raw:
+                console.print(Panel(
+                    "\n\n".join([r["content"] for r in tool_results]),
+                    title="Complete Tool Results",
+                    border_style="green"
+                ))
+                stats_parts = [f"Tool calls: {len(tool_calls_made)}"]
+                console.print(f"[dim]{' | '.join(stats_parts)}[/dim]")
+            elif final_response:
+                console.print(Panel(
+                    final_response.content,
+                    title="FDA Agent Response",
+                    border_style="green"
+                ))
 
-    console.print(Panel(
-        response.content,
-        title="FDA Agent Response",
-        border_style="green"
-    ))
+                total_input = 0
+                total_output = 0
+                total_cost = 0.0
+                model_name = ""
+                for msg in all_ai_messages:
+                    if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
+                        total_input += msg.usage_metadata.get("input_tokens", 0)
+                        total_output += msg.usage_metadata.get("output_tokens", 0)
+                    if hasattr(msg, 'response_metadata') and msg.response_metadata:
+                        model_name = msg.response_metadata.get("model_name", model_name)
+                        token_usage = msg.response_metadata.get("token_usage", {})
+                        if token_usage.get("cost"):
+                            total_cost += token_usage["cost"]
 
-    stats_parts = []
-    if response.model:
-        stats_parts.append(f"Model: {response.model}")
-    if response.total_tokens > 0:
-        stats_parts.append(f"Tokens: {response.input_tokens:,} in / {response.output_tokens:,} out ({response.total_tokens:,} total)")
-    if response.cost is not None:
-        stats_parts.append(f"Cost: ${response.cost:.4f}")
-    if stats_parts:
-        console.print(f"[dim]{' | '.join(stats_parts)}[/dim]")
+                stats_parts = []
+                if model_name:
+                    stats_parts.append(f"Model: {model_name}")
+                if total_input or total_output:
+                    stats_parts.append(f"Tokens: {total_input:,} in / {total_output:,} out ({total_input + total_output:,} total)")
+                if total_cost > 0:
+                    stats_parts.append(f"Cost: ${total_cost:.4f}")
+                stats_parts.append(f"Tool calls: {len(tool_calls_made)}")
+                if stats_parts:
+                    console.print(f"[dim]{' | '.join(stats_parts)}[/dim]")
+            else:
+                console.print("[yellow]No response generated[/yellow]")
+
+        else:
+            final_response = None
+            all_ai_messages = []
+            tool_count = 0
+
+            status = console.status("[bold green]Thinking...[/bold green]")
+            status_handler = StatusHandler(status)
+            fda_logger = logging.getLogger("fda_agent")
+            fda_logger.addHandler(status_handler)
+            fda_logger.setLevel(logging.INFO)
+            fda_logger.propagate = False
+
+            status.start()
+            try:
+                for event in agent.stream(question):
+                    node_name = list(event.keys())[0] if event else "unknown"
+                    messages = event.get(node_name, {}).get("messages", [])
+
+                    for msg in messages:
+                        if isinstance(msg, AIMessage):
+                            all_ai_messages.append(msg)
+                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                for tool_call in msg.tool_calls:
+                                    tool_count += 1
+                                    tool_name = tool_call.get('name', 'unknown')
+                                    status.update(f"[bold green]Calling {tool_name}...[/bold green]")
+                            elif msg.content:
+                                final_response = msg
+                        elif isinstance(msg, ToolMessage):
+                            status.update(f"[bold green]Processing ({tool_count} tools called)...[/bold green]")
+            finally:
+                fda_logger.removeHandler(status_handler)
+                fda_logger.propagate = True
+                status.stop()
+
+            if final_response:
+                console.print(Panel(
+                    final_response.content,
+                    title="FDA Agent Response",
+                    border_style="green"
+                ))
+
+                total_input = 0
+                total_output = 0
+                total_cost = 0.0
+                model_name = ""
+                for msg in all_ai_messages:
+                    if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
+                        total_input += msg.usage_metadata.get("input_tokens", 0)
+                        total_output += msg.usage_metadata.get("output_tokens", 0)
+                    if hasattr(msg, 'response_metadata') and msg.response_metadata:
+                        model_name = msg.response_metadata.get("model_name", model_name)
+                        token_usage = msg.response_metadata.get("token_usage", {})
+                        if token_usage.get("cost"):
+                            total_cost += token_usage["cost"]
+
+                stats_parts = []
+                if model_name:
+                    stats_parts.append(f"Model: {model_name}")
+                if total_input or total_output:
+                    stats_parts.append(f"Tokens: {total_input:,} in / {total_output:,} out ({total_input + total_output:,} total)")
+                if total_cost > 0:
+                    stats_parts.append(f"Cost: ${total_cost:.4f}")
+                stats_parts.append(f"Tool calls: {tool_count}")
+                if stats_parts:
+                    console.print(f"[dim]{' | '.join(stats_parts)}[/dim]")
+            else:
+                console.print("[yellow]No response generated[/yellow]")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        if ctx.obj.get('config') and hasattr(ctx.obj['config'], 'debug') and ctx.obj['config'].debug:
+            import traceback
+            console.print(traceback.format_exc())
 
 
 @cli.command()

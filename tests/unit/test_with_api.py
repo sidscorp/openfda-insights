@@ -8,6 +8,7 @@ import asyncio
 import sys
 import os
 from datetime import datetime
+import pytest
 
 # Add src to path for testing
 sys.path.insert(0, 'src')
@@ -28,6 +29,7 @@ def check_api_keys():
     
     return ai_key is not None  # AI key is required for most tests
 
+@pytest.mark.asyncio
 async def test_simple_search():
     """Test basic search functionality"""
     print("\n🔍 Testing Simple Search...")
@@ -62,6 +64,7 @@ async def test_simple_search():
         print(f"❌ Simple search failed: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_search_with_ai():
     """Test search with AI analysis"""
     print("\n🤖 Testing Search with AI Analysis...")
@@ -98,6 +101,7 @@ async def test_search_with_ai():
         print("   This might be due to missing AI API key or AI service issues")
         return False
 
+@pytest.mark.asyncio
 async def test_device_intelligence():
     """Test device intelligence feature"""
     print("\n📱 Testing Device Intelligence...")
@@ -131,6 +135,7 @@ async def test_device_intelligence():
         print(f"❌ Device intelligence failed: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_manufacturer_intelligence():
     """Test manufacturer intelligence"""
     print("\n🏭 Testing Manufacturer Intelligence...")
@@ -157,6 +162,7 @@ async def test_manufacturer_intelligence():
         print(f"❌ Manufacturer intelligence failed: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_trend_analysis():
     """Test trend analysis"""
     print("\n📈 Testing Trend Analysis...")
@@ -187,6 +193,7 @@ async def test_trend_analysis():
         print(f"❌ Trend analysis failed: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_device_comparison():
     """Test device comparison"""
     print("\n⚖️ Testing Device Comparison...")

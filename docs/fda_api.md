@@ -30,10 +30,21 @@ GET https://api.fda.gov/device/event.json
 **Key Fields**:
 - `device.brand_name` - Product brand name
 - `device.manufacturer_d_name` - Manufacturer name
-- `device.device_report_product_code` - FDA product code
+- `device.manufacturer_d_country` - Manufacturer country code (e.g., "CN", "DE", "US")
+- `device.device_report_product_code` - FDA product code (3-letter, e.g., "FXX")
 - `event_type` - Malfunction, Injury, Death
 - `date_received` - Report date
 - `mdr_text` - Narrative description
+
+**Geographic Filtering**:
+The `device.manufacturer_d_country` field enables direct filtering by manufacturer location:
+```bash
+# Events from Chinese manufacturers
+curl "https://api.fda.gov/device/event.json?search=device.manufacturer_d_country:CN&limit=10"
+
+# Mask events from China (combine product code + country)
+curl "https://api.fda.gov/device/event.json?search=device.device_report_product_code:FXX+AND+device.manufacturer_d_country:CN&limit=10"
+```
 
 **Example**:
 ```bash
@@ -51,10 +62,23 @@ GET https://api.fda.gov/device/enforcement.json
 **Key Fields**:
 - `product_description` - Device description
 - `recalling_firm` - Company name
+- `country` - Recalling firm's country (e.g., "China", "United States", "Germany")
 - `reason_for_recall` - Why recalled
 - `classification` - Class I (serious), II, III
 - `status` - Ongoing, Completed, Terminated
 - `recall_initiation_date` - When recall started
+
+**Geographic Filtering**:
+The `country` field enables direct filtering by recalling firm's location:
+```bash
+# All recalls from Chinese firms
+curl "https://api.fda.gov/device/enforcement.json?search=country:China&limit=10"
+
+# Mask recalls from China
+curl "https://api.fda.gov/device/enforcement.json?search=product_description:mask+AND+country:China&limit=10"
+```
+
+**Note**: Unlike MAUDE, this uses full country names (not ISO codes).
 
 **Example**:
 ```bash
@@ -188,6 +212,27 @@ Three-letter codes that classify devices. Examples:
 | OZP | COVID-19 Test |
 
 Search all product codes: https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfPCD/classification.cfm
+
+### Cross-Database Identifier Availability
+
+FDA databases do NOT share a unified device identifier. Understanding which fields are available in each database is critical for designing queries:
+
+| Field | Events (MAUDE) | Recalls | 510(k) | PMA | Classifications | Registrations |
+|-------|---------------|---------|--------|-----|-----------------|---------------|
+| Product Code | ✅ `device.device_report_product_code` | ❌ | ✅ | ✅ | ✅ | ✅ |
+| Device ID (DI) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Country | ✅ `device.manufacturer_d_country` (ISO) | ✅ `country` (full name) | ❌ | ❌ | ❌ | ✅ |
+| Manufacturer | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+
+**Key limitations**:
+- **Recalls have no product code field** - the `openfda{}` block is empty, so you cannot link recalls to specific product codes
+- **No unified device ID** - you cannot trace a specific device across databases by its UDI
+- **Country field inconsistency** - MAUDE uses ISO codes ("CN"), recalls use full names ("China")
+
+**Workarounds**:
+- Use product codes to link MAUDE events → classifications → 510(k)/PMA
+- Use manufacturer name text matching to link recalls → other databases
+- Use the `resolve_device` tool to find product codes, then search by code where supported
 
 ## GUDID (Global UDI Database)
 

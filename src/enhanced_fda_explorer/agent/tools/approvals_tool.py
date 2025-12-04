@@ -3,9 +3,11 @@ PMA Approvals Tool - Search FDA Premarket Approval (PMA) database.
 """
 from typing import Type, Optional
 from collections import Counter
+import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 import requests
+import httpx
 
 
 class SearchPMAInput(BaseModel):
@@ -129,4 +131,45 @@ class SearchPMATool(BaseTool):
         return "\n".join(lines)
 
     async def _arun(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
-        return self._run(query, date_from, date_to, limit)
+        """Async version using httpx for non-blocking HTTP calls."""
+        start_time = time.time()
+        try:
+            url = "https://api.fda.gov/device/pma.json"
+
+            if query.upper().startswith("P") and len(query) >= 6:
+                search_parts = [f'pma_number:"{query.upper()}"']
+            else:
+                search_parts = [f'(trade_name:"{query}" OR generic_name:"{query}" OR applicant:"{query}")']
+
+            if date_from and date_to:
+                search_parts.append(f'decision_date:[{date_from} TO {date_to}]')
+            elif date_from:
+                search_parts.append(f'decision_date:[{date_from} TO *]')
+            elif date_to:
+                search_parts.append(f'decision_date:[* TO {date_to}]')
+
+            search = " AND ".join(search_parts)
+
+            params = {
+                "search": search,
+                "limit": min(limit, 100),
+                "sort": "decision_date:desc"
+            }
+            if self._api_key:
+                params["api_key"] = self._api_key
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            elapsed_ms = (time.time() - start_time) * 1000
+            result = self._format_results(query, data)
+            return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return f"No PMA approvals found for '{query}'."
+            return f"FDA API error: {str(e)}"
+        except Exception as e:
+            return f"Error searching PMA approvals: {str(e)}"

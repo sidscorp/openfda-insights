@@ -3,9 +3,11 @@ Classifications Tool - Search FDA device classification database.
 """
 from typing import Type, Optional
 from collections import Counter
+import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 import requests
+import httpx
 import re
 
 
@@ -126,4 +128,37 @@ class SearchClassificationsTool(BaseTool):
         return "\n".join(lines)
 
     async def _arun(self, query: str, limit: int = 50) -> str:
-        return self._run(query, limit)
+        """Async version using httpx for non-blocking HTTP calls."""
+        start_time = time.time()
+        try:
+            url = "https://api.fda.gov/device/classification.json"
+
+            if re.match(r'^[A-Z]{3}$', query.upper()):
+                search = f'product_code:"{query.upper()}"'
+            elif re.match(r'^\d+\.\d+$', query):
+                search = f'regulation_number:"{query}"'
+            else:
+                search = f'device_name:"{query}"'
+
+            params = {
+                "search": search,
+                "limit": min(limit, 100)
+            }
+            if self._api_key:
+                params["api_key"] = self._api_key
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            elapsed_ms = (time.time() - start_time) * 1000
+            result = self._format_results(query, data)
+            return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return f"No classifications found for '{query}'."
+            return f"FDA API error: {str(e)}"
+        except Exception as e:
+            return f"Error searching classifications: {str(e)}"

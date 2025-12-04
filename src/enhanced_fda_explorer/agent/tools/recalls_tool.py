@@ -3,50 +3,84 @@ Recalls Tool - Search FDA device recalls.
 """
 from typing import Type, Optional
 from collections import Counter
+import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 import requests
+import httpx
+
+from ...models.responses import RecallSearchResult, RecallRecord
 
 
 class SearchRecallsInput(BaseModel):
-    query: str = Field(description="Device name, product code, or company name")
+    query: str = Field(description="Device name or manufacturer name to search for in recalls")
     date_from: str = Field(default="", description="Start date in YYYYMMDD format")
     date_to: str = Field(default="", description="End date in YYYYMMDD format")
     limit: int = Field(default=100, description="Maximum number of results")
+    search_field: str = Field(default="both", description="Which field to search: 'product' (device name), 'firm' (manufacturer), or 'both'")
+    country: str = Field(default="", description="Filter by recalling firm's country (e.g., 'China', 'Germany', 'United States')")
 
 
 class SearchRecallsTool(BaseTool):
     name: str = "search_recalls"
-    description: str = """Search FDA device recalls.
-    Use this to find recalled medical devices, recall classifications (Class I, II, III),
-    and reasons for recalls. Can search by device name, product description, or company.
+    description: str = """Search FDA device recalls by product description, firm name, or country.
+
+    Parameters:
+    - query: Device name or manufacturer name (can be empty if using country filter)
+    - search_field: 'product', 'firm', or 'both' (default)
+    - country: Filter by recalling firm's country (e.g., 'China', 'Germany')
+
+    Examples:
+    - Masks recalled: search_recalls(query="mask", search_field="product")
+    - Recalls from China: search_recalls(query="", country="China")
+    - Masks from China: search_recalls(query="mask", search_field="product", country="China")
+    - Recalls by specific firm: search_recalls(query="Medtronic", search_field="firm")
+
     Class I recalls are the most serious (risk of death or serious injury)."""
     args_schema: Type[BaseModel] = SearchRecallsInput
 
     _api_key: Optional[str] = None
+    _last_structured_result: Optional[RecallSearchResult] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
 
-    def _run(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
+    def get_last_structured_result(self) -> Optional[RecallSearchResult]:
+        return self._last_structured_result
+
+    def _run(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100, search_field: str = "both", country: str = "") -> str:
         try:
-            url = "https://api.fda.gov/device/recall.json"
-            search_parts = [f'(product_description:"{query}" OR recalling_firm:"{query}")']
+            url = "https://api.fda.gov/device/enforcement.json"
+            search_parts = []
+
+            if query:
+                if search_field == "firm":
+                    search_parts.append(f'recalling_firm:"{query}"')
+                elif search_field == "product":
+                    search_parts.append(f'product_description:"{query}"')
+                else:
+                    search_parts.append(f'(product_description:"{query}" OR recalling_firm:"{query}")')
+
+            if country:
+                search_parts.append(f'country:"{country}"')
 
             if date_from and date_to:
-                search_parts.append(f'event_date_initiated:[{date_from} TO {date_to}]')
+                search_parts.append(f'recall_initiation_date:[{date_from} TO {date_to}]')
             elif date_from:
-                search_parts.append(f'event_date_initiated:[{date_from} TO *]')
+                search_parts.append(f'recall_initiation_date:[{date_from} TO *]')
             elif date_to:
-                search_parts.append(f'event_date_initiated:[* TO {date_to}]')
+                search_parts.append(f'recall_initiation_date:[* TO {date_to}]')
+
+            if not search_parts:
+                return "Error: Must provide either query or country parameter."
 
             search = " AND ".join(search_parts)
 
             params = {
                 "search": search,
                 "limit": min(limit, 100),
-                "sort": "event_date_initiated:desc"
+                "sort": "recall_initiation_date:desc"
             }
             if self._api_key:
                 params["api_key"] = self._api_key
@@ -55,14 +89,59 @@ class SearchRecallsTool(BaseTool):
             response.raise_for_status()
             data = response.json()
 
+            self._last_structured_result = self._to_structured(query, date_from, date_to, data)
             return self._format_results(query, data)
 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
+                self._last_structured_result = RecallSearchResult(
+                    query=query, date_from=date_from or None, date_to=date_to or None, total_found=0
+                )
                 return f"No recalls found for '{query}'."
+            self._last_structured_result = None
             return f"FDA API error: {str(e)}"
         except Exception as e:
+            self._last_structured_result = None
             return f"Error searching recalls: {str(e)}"
+
+    def _to_structured(self, query: str, date_from: str, date_to: str, data: dict) -> RecallSearchResult:
+        results = data.get("results", [])
+        total = data.get("meta", {}).get("results", {}).get("total", 0)
+
+        records = []
+        class_counts = Counter()
+        status_counts = Counter()
+        firm_counts = Counter()
+
+        for r in results:
+            recall_class = r.get("classification", "Unknown")
+            class_counts[recall_class] += 1
+            status_counts[r.get("status", "Unknown")] += 1
+            firm_counts[r.get("recalling_firm", "Unknown")] += 1
+
+            records.append(RecallRecord(
+                recall_number=r.get("recall_number", ""),
+                event_id=r.get("event_id"),
+                recalling_firm=r.get("recalling_firm", ""),
+                product_description=r.get("product_description", ""),
+                reason_for_recall=r.get("reason_for_recall", ""),
+                classification=recall_class,
+                status=r.get("status", ""),
+                recall_initiation_date=r.get("recall_initiation_date", ""),
+                voluntary_mandated=r.get("voluntary_mandated"),
+                distribution_pattern=r.get("distribution_pattern")
+            ))
+
+        return RecallSearchResult(
+            query=query,
+            date_from=date_from or None,
+            date_to=date_to or None,
+            total_found=total,
+            records=records,
+            class_counts=dict(class_counts),
+            status_counts=dict(status_counts),
+            firm_counts=dict(firm_counts)
+        )
 
     def _format_results(self, query: str, data: dict) -> str:
         results = data.get("results", [])
@@ -78,10 +157,8 @@ class SearchRecallsTool(BaseTool):
         firms = Counter()
 
         for recall in results:
-            recall_class = recall.get("openfda", {}).get("device_class", "Unknown")
-            if isinstance(recall_class, list):
-                recall_class = recall_class[0] if recall_class else "Unknown"
-            class_counts[f"Class {recall_class}"] += 1
+            recall_class = recall.get("classification", "Unknown")
+            class_counts[recall_class] += 1
 
             status = recall.get("status", "Unknown")
             status_counts[status] += 1
@@ -92,11 +169,11 @@ class SearchRecallsTool(BaseTool):
         lines.append("RECALL CLASSIFICATIONS:")
         for cls, count in sorted(class_counts.items()):
             severity = ""
-            if "I" in cls and "II" not in cls:
+            if cls == "Class I":
                 severity = " (most serious - risk of death/injury)"
-            elif "II" in cls and "III" not in cls:
+            elif cls == "Class II":
                 severity = " (moderate risk)"
-            elif "III" in cls:
+            elif cls == "Class III":
                 severity = " (unlikely to cause adverse health)"
             lines.append(f"  {cls}: {count}{severity}")
 
@@ -111,17 +188,76 @@ class SearchRecallsTool(BaseTool):
 
         lines.append("\nRECENT RECALLS:")
         for i, recall in enumerate(results[:5], 1):
-            date = recall.get("event_date_initiated", "Unknown")
+            date_raw = recall.get("recall_initiation_date", "")
+            date = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:8]}" if len(date_raw) == 8 else date_raw or "Unknown"
             firm = recall.get("recalling_firm", "Unknown")
             product = recall.get("product_description", "Unknown")[:60]
             reason = recall.get("reason_for_recall", "Not specified")[:80]
+            recall_class = recall.get("classification", "")
 
-            lines.append(f"  {i}. Date: {date}")
+            lines.append(f"  {i}. Date: {date} | {recall_class}")
             lines.append(f"     Firm: {firm}")
             lines.append(f"     Product: {product}")
             lines.append(f"     Reason: {reason}")
 
         return "\n".join(lines)
 
-    async def _arun(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
-        return self._run(query, date_from, date_to, limit)
+    async def _arun(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100, search_field: str = "both", country: str = "") -> str:
+        """Async version using httpx for non-blocking HTTP calls."""
+        start_time = time.time()
+        try:
+            url = "https://api.fda.gov/device/enforcement.json"
+            search_parts = []
+
+            if query:
+                if search_field == "firm":
+                    search_parts.append(f'recalling_firm:"{query}"')
+                elif search_field == "product":
+                    search_parts.append(f'product_description:"{query}"')
+                else:
+                    search_parts.append(f'(product_description:"{query}" OR recalling_firm:"{query}")')
+
+            if country:
+                search_parts.append(f'country:"{country}"')
+
+            if date_from and date_to:
+                search_parts.append(f'recall_initiation_date:[{date_from} TO {date_to}]')
+            elif date_from:
+                search_parts.append(f'recall_initiation_date:[{date_from} TO *]')
+            elif date_to:
+                search_parts.append(f'recall_initiation_date:[* TO {date_to}]')
+
+            if not search_parts:
+                return "Error: Must provide either query or country parameter."
+
+            search = " AND ".join(search_parts)
+
+            params = {
+                "search": search,
+                "limit": min(limit, 100),
+                "sort": "recall_initiation_date:desc"
+            }
+            if self._api_key:
+                params["api_key"] = self._api_key
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            elapsed_ms = (time.time() - start_time) * 1000
+            self._last_structured_result = self._to_structured(query, date_from, date_to, data)
+            result = self._format_results(query, data)
+            return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                self._last_structured_result = RecallSearchResult(
+                    query=query, date_from=date_from or None, date_to=date_to or None, total_found=0
+                )
+                return f"No recalls found for '{query}'."
+            self._last_structured_result = None
+            return f"FDA API error: {str(e)}"
+        except Exception as e:
+            self._last_structured_result = None
+            return f"Error searching recalls: {str(e)}"
