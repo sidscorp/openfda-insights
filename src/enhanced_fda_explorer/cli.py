@@ -5,6 +5,7 @@ Command Line Interface for Enhanced FDA Explorer
 import json
 import logging
 import sys
+import uuid
 from typing import Optional
 
 import click
@@ -104,8 +105,9 @@ def cli(ctx, config, debug, api_key, validate_config, skip_validation):
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output including tool calls')
 @click.option('--raw', '-r', is_flag=True, help='Show raw tool results without LLM summarization')
 @click.option('--json', 'as_json', is_flag=True, help='Output full structured response as JSON')
+@click.option('--session-id', help='Session ID for multi-turn conversations (reuse to continue)')
 @click.pass_context
-def ask(ctx, question, provider, model, verbose, raw, as_json):
+def ask(ctx, question, provider, model, verbose, raw, as_json, session_id):
     """Ask the FDA Intelligence Agent a question.
 
     The agent uses tools to search FDA databases and synthesize answers.
@@ -126,7 +128,7 @@ def ask(ctx, question, provider, model, verbose, raw, as_json):
         if as_json:
             stderr_console = Console(stderr=True)
             with stderr_console.status("[bold green]Thinking...[/bold green]"):
-                response = agent.ask(question)
+                response = agent.ask(question, session_id=session_id)
 
             if response.structured:
                 print(response.structured.model_dump_json(indent=2))
@@ -163,7 +165,7 @@ def ask(ctx, question, provider, model, verbose, raw, as_json):
 
             status.start()
             try:
-                for event in agent.stream(question):
+                for event in agent.stream(question, session_id=session_id):
                     node_name = list(event.keys())[0] if event else "unknown"
                     messages = event.get(node_name, {}).get("messages", [])
 
@@ -249,7 +251,46 @@ def ask(ctx, question, provider, model, verbose, raw, as_json):
             else:
                 console.print("[yellow]No response generated[/yellow]")
 
-        else:
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        if ctx.obj.get('config') and hasattr(ctx.obj['config'], 'debug') and ctx.obj['config'].debug:
+            import traceback
+            console.print(traceback.format_exc())
+
+
+@cli.command()
+@click.option('--provider', '-p',
+              type=click.Choice(['openrouter', 'bedrock', 'ollama']),
+              default='openrouter',
+              help='LLM provider to use')
+@click.option('--model', '-m', default=None, help='Model to use (provider-specific)')
+@click.option('--session-id', help='Session ID for the chat (reuse to continue)')
+@click.pass_context
+def chat(ctx, provider, model, session_id):
+    """Interactive multi-turn chat with the FDA agent."""
+    from .agent import FDAAgent
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    sid = session_id or str(uuid.uuid4())
+    console.print(f"[dim]Provider: {provider} | Model: {model or 'default'} | Session: {sid}[/dim]\n")
+    console.print("[cyan]Type your question. Enter /exit or Ctrl+C to quit.[/cyan]\n")
+
+    agent = FDAAgent(provider=provider, model=model)
+
+    try:
+        while True:
+            try:
+                user_input = input("You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[dim]Ending chat.[/dim]")
+                break
+
+            if not user_input:
+                continue
+            if user_input.lower() in {"/exit", "exit", "quit", "/quit"}:
+                console.print("[dim]Ending chat.[/dim]")
+                break
+
             final_response = None
             all_ai_messages = []
             tool_count = 0
@@ -263,7 +304,7 @@ def ask(ctx, question, provider, model, verbose, raw, as_json):
 
             status.start()
             try:
-                for event in agent.stream(question):
+                for event in agent.stream(user_input, session_id=sid):
                     node_name = list(event.keys())[0] if event else "unknown"
                     messages = event.get(node_name, {}).get("messages", [])
 

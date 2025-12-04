@@ -6,10 +6,10 @@ from collections import Counter
 import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-import requests
 import httpx
 
 from ...models.responses import LocationContext
+from ...openfda_client import OpenFDAClient
 
 
 COUNTRY_CODES = {
@@ -147,10 +147,12 @@ class LocationResolverTool(BaseTool):
 
     _api_key: Optional[str] = None
     _last_structured_result: Optional[LocationContext] = None
+    _client: OpenFDAClient
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
+        self._client = OpenFDAClient(api_key=api_key)
 
     def get_last_structured_result(self) -> Optional[LocationContext]:
         return self._last_structured_result
@@ -269,7 +271,7 @@ class LocationResolverTool(BaseTool):
         device_type_filter: str = None
     ) -> str:
         try:
-            data = self._fetch(search, limit)
+            data = self._fetch_all(search, limit)
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 return f"No manufacturers found in {location_name}."
@@ -286,32 +288,31 @@ class LocationResolverTool(BaseTool):
         lines = [f"Medical device manufacturers in {location_name}:\n"]
         lines.append(f"Total registered establishments: {total:,}\n")
 
-        companies = {}
+        companies = Counter()
+        city_counts = Counter()
         device_types = Counter()
-        cities = Counter()
+        company_cities: dict[str, str] = {}
 
         for result in results:
             reg = result.get("registration", {})
             name = reg.get("name", "Unknown")
             city = reg.get("city", "")
 
-            if name not in companies:
-                companies[name] = {"city": city, "products": []}
-
+            companies[name] += 1
+            if city and name not in company_cities:
+                company_cities[name] = city
             if city:
-                cities[city] += 1
+                city_counts[city] += 1
 
             for prod in result.get("products", []):
                 openfda = prod.get("openfda", {})
                 device_name = openfda.get("device_name", "")
                 if device_name:
                     device_types[device_name] += 1
-                    if device_name not in companies[name]["products"]:
-                        companies[name]["products"].append(device_name)
 
-        if cities:
+        if city_counts:
             lines.append("TOP CITIES:")
-            for city, count in cities.most_common(10):
+            for city, count in city_counts.most_common(10):
                 lines.append(f"  {city}: {count}")
 
         if device_types:
@@ -319,17 +320,12 @@ class LocationResolverTool(BaseTool):
             for dtype, count in device_types.most_common(15):
                 lines.append(f"  {dtype}: {count}")
 
-        lines.append(f"\nTOP COMPANIES ({len(companies)} shown):")
+        lines.append(f"\nTOP COMPANIES (showing up to {min(20, len(companies))}):")
         top_manufacturers = []
-        for name, info in list(companies.items())[:20]:
-            city_str = f" - {info['city']}" if info["city"] else ""
-            lines.append(f"  • {name}{city_str}")
+        for name, count in companies.most_common(20):
+            city_str = f" - {company_cities.get(name, '')}" if company_cities.get(name) else ""
+            lines.append(f"  • {name}{city_str} ({count} records)")
             top_manufacturers.append(name)
-            if info["products"]:
-                prod_list = ", ".join(info["products"][:3])
-                if len(info["products"]) > 3:
-                    prod_list += f" (+{len(info['products']) - 3} more)"
-                lines.append(f"    Products: {prod_list}")
 
         self._last_structured_result = LocationContext(
             location_type=location_type,
@@ -344,24 +340,30 @@ class LocationResolverTool(BaseTool):
         return "\n".join(lines)
 
     def _fetch(self, search: str, limit: int) -> dict:
-        url = "https://api.fda.gov/device/registrationlisting.json"
         params = {"search": search, "limit": min(limit, 100)}
-        if self._api_key:
-            params["api_key"] = self._api_key
+        return self._client.get("device/registrationlisting.json", params=params)
 
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        return response.json()
+    def _fetch_all(self, search: str, max_records: int) -> dict:
+        """Fetch and aggregate up to max_records across pages."""
+        params = {"search": search}
+        return self._client.get_paginated(
+            "device/registrationlisting.json",
+            params=params,
+            limit=max_records,
+            page_size=100,
+        )
 
-    async def _fetch_async(self, client: httpx.AsyncClient, search: str, limit: int) -> dict:
-        url = "https://api.fda.gov/device/registrationlisting.json"
+    async def _fetch_async(self, search: str, limit: int) -> dict:
         params = {"search": search, "limit": min(limit, 100)}
-        if self._api_key:
-            params["api_key"] = self._api_key
+        return await self._client.aget("device/registrationlisting.json", params=params)
 
-        response = await client.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
+    async def _fetch_all_async(self, search: str, max_records: int) -> dict:
+        return await self._client.aget_paginated(
+            "device/registrationlisting.json",
+            params={"search": search},
+            limit=max_records,
+            page_size=100,
+        )
 
     async def _arun(self, location: str, device_type: Optional[str] = None, limit: int = 100) -> str:
         """Async version using httpx for non-blocking HTTP calls."""
@@ -369,30 +371,28 @@ class LocationResolverTool(BaseTool):
         location_lower = location.lower().strip()
         self._last_structured_result = None
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            if location_lower in REGIONS:
-                result = await self._search_region_async(client, location_lower, REGIONS[location_lower], device_type, limit)
-            elif location_lower in US_STATES:
-                result = await self._search_state_async(client, US_STATES[location_lower], device_type, limit)
-            elif location_lower in COUNTRY_CODES:
-                result = await self._search_country_async(client, COUNTRY_CODES[location_lower], device_type, limit)
-            elif len(location) == 2 and location.upper() in COUNTRY_NAMES:
-                result = await self._search_country_async(client, location.upper(), device_type, limit)
-            elif len(location) == 2 and location.upper() in STATE_NAMES:
-                result = await self._search_state_async(client, location.upper(), device_type, limit)
-            else:
-                return f"Unknown location: '{location}'. Try a country (China, Germany), region (Asia, Europe), or US state (California, TX)."
+        if location_lower in REGIONS:
+            result = await self._search_region_async(location_lower, REGIONS[location_lower], device_type, limit)
+        elif location_lower in US_STATES:
+            result = await self._search_state_async(US_STATES[location_lower], device_type, limit)
+        elif location_lower in COUNTRY_CODES:
+            result = await self._search_country_async(COUNTRY_CODES[location_lower], device_type, limit)
+        elif len(location) == 2 and location.upper() in COUNTRY_NAMES:
+            result = await self._search_country_async(location.upper(), device_type, limit)
+        elif len(location) == 2 and location.upper() in STATE_NAMES:
+            result = await self._search_state_async(location.upper(), device_type, limit)
+        else:
+            return f"Unknown location: '{location}'. Try a country (China, Germany), region (Asia, Europe), or US state (California, TX)."
 
         elapsed_ms = (time.time() - start_time) * 1000
         return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
 
-    async def _search_country_async(self, client: httpx.AsyncClient, country_code: str, device_type: Optional[str], limit: int) -> str:
+    async def _search_country_async(self, country_code: str, device_type: Optional[str], limit: int) -> str:
         search = f"registration.iso_country_code:{country_code}"
         if device_type:
             search += f" AND (proprietary_name:{device_type} OR products.openfda.device_name:{device_type})"
 
         return await self._execute_search_async(
-            client,
             search,
             COUNTRY_NAMES.get(country_code, country_code),
             "country",
@@ -401,13 +401,12 @@ class LocationResolverTool(BaseTool):
             device_type_filter=device_type
         )
 
-    async def _search_state_async(self, client: httpx.AsyncClient, state_code: str, device_type: Optional[str], limit: int) -> str:
+    async def _search_state_async(self, state_code: str, device_type: Optional[str], limit: int) -> str:
         search = f"registration.state_code:{state_code}"
         if device_type:
             search += f" AND (proprietary_name:{device_type} OR products.openfda.device_name:{device_type})"
 
         return await self._execute_search_async(
-            client,
             search,
             STATE_NAMES.get(state_code, state_code),
             "state",
@@ -416,7 +415,7 @@ class LocationResolverTool(BaseTool):
             device_type_filter=device_type
         )
 
-    async def _search_region_async(self, client: httpx.AsyncClient, region_name: str, country_codes: list, device_type: Optional[str], limit: int) -> str:
+    async def _search_region_async(self, region_name: str, country_codes: list, device_type: Optional[str], limit: int) -> str:
         import asyncio
         lines = [f"Medical device manufacturers in {region_name.upper()}:\n"]
         total_establishments = 0
@@ -427,7 +426,7 @@ class LocationResolverTool(BaseTool):
             if device_type:
                 search += f" AND (proprietary_name:{device_type} OR products.openfda.device_name:{device_type})"
             try:
-                data = await self._fetch_async(client, search, 1)
+                data = await self._fetch_async(search, 1)
                 count = data.get("meta", {}).get("results", {}).get("total", 0)
                 return code, count
             except Exception:
@@ -452,7 +451,7 @@ class LocationResolverTool(BaseTool):
             search = f"registration.iso_country_code:{top_country}"
             if device_type:
                 search += f" AND (proprietary_name:{device_type} OR products.openfda.device_name:{device_type})"
-            data = await self._fetch_async(client, search, 20)
+            data = await self._fetch_async(search, 20)
             companies = {}
             for r in data.get("results", []):
                 name = r.get("registration", {}).get("name", "Unknown")
@@ -476,7 +475,6 @@ class LocationResolverTool(BaseTool):
 
     async def _execute_search_async(
         self,
-        client: httpx.AsyncClient,
         search: str,
         location_name: str,
         location_type: str,
@@ -486,7 +484,7 @@ class LocationResolverTool(BaseTool):
         device_type_filter: str = None
     ) -> str:
         try:
-            data = await self._fetch_async(client, search, limit)
+            data = await self._fetch_all_async(search, limit)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return f"No manufacturers found in {location_name}."
