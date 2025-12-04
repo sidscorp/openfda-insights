@@ -409,10 +409,17 @@ class Config(BaseSettings):
 
     # GUDID Database settings
     gudid_db_path: str = Field(
-        default="/root/projects/analytics-projects/shared-data/gudid_full.db",
+        default="data/gudid.db",
         env="GUDID_DB_PATH"
     )
-    
+
+    @validator("gudid_db_path")
+    def expand_gudid_path(cls, v):
+        """Expand ~ in GUDID database path."""
+        if v:
+            return os.path.expanduser(v)
+        return v
+
     # Search settings
     search_timeout: int = Field(default=30, env="SEARCH_TIMEOUT", ge=1, le=300)
     max_concurrent_searches: int = Field(default=5, env="MAX_CONCURRENT_SEARCHES", ge=1, le=50)

@@ -593,6 +593,61 @@ def validate_config_cmd(ctx, config, strict):
         sys.exit(1)
 
 
+@cli.command('build-gudid')
+@click.argument('release_dir', type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option('--output', '-o', default=None, help='Output database path (default: data/gudid.db)')
+@click.pass_context
+def build_gudid(ctx, release_dir, output):
+    """Build GUDID database from FDA release files.
+
+    RELEASE_DIR is the path to the GUDID full release directory containing XML files.
+
+    Examples:
+        fda build-gudid ~/Downloads/gudid_full_release_20250902
+        fda build-gudid /path/to/release --output /custom/path/gudid.db
+    """
+    from pathlib import Path
+    from .data.gudid_indexer import GUDIDIndexer
+
+    # Default output path - relative to project root
+    if output is None:
+        data_dir = Path("data")
+        data_dir.mkdir(parents=True, exist_ok=True)
+        output = str(data_dir / "gudid.db")
+
+    console.print(f"[bold blue]Building GUDID Database[/bold blue]\n")
+    console.print(f"  Source: {release_dir}")
+    console.print(f"  Output: {output}\n")
+
+    # Check for XML files
+    xml_files = list(Path(release_dir).glob("*.xml"))
+    if not xml_files:
+        console.print(f"[red]Error: No XML files found in {release_dir}[/red]")
+        sys.exit(1)
+
+    console.print(f"Found {len(xml_files)} XML files to index\n")
+
+    try:
+        indexer = GUDIDIndexer(output)
+        indexer.connect()
+        indexer.create_tables()
+
+        with console.status("[bold green]Indexing GUDID files...[/bold green]") as status:
+            indexer.index_directory(release_dir)
+
+        indexer.verify_index()
+        indexer.close()
+
+        console.print(f"\n[green]Database built successfully![/green]")
+        console.print(f"\nTo use this database, set the environment variable:")
+        console.print(f"  [cyan]export GUDID_DB_PATH={output}[/cyan]")
+        console.print(f"\nOr add it to your ~/.zshrc for persistence.")
+
+    except Exception as e:
+        console.print(f"[red]Error building database:[/red] {e}")
+        sys.exit(1)
+
+
 def main():
     """Main entry point"""
     cli()
