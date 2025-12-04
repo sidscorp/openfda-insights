@@ -91,6 +91,7 @@ class DeviceResolverTool(BaseTool):
             if match.device.company_name:
                 company_counts[match.device.company_name] = company_counts.get(match.device.company_name, 0) + 1
 
+        # Only include product codes with >= 2 devices
         product_codes = [
             ProductCodeInfo(
                 code=code,
@@ -98,6 +99,7 @@ class DeviceResolverTool(BaseTool):
                 device_count=info["count"]
             )
             for code, info in sorted(product_code_info.items(), key=lambda x: x[1]["count"], reverse=True)
+            if info["count"] >= 2
         ]
 
         manufacturers = [
@@ -168,10 +170,16 @@ class DeviceResolverTool(BaseTool):
             lines.append(f"  {label}: {count} matches")
 
         if product_code_info:
-            lines.append(f"\nPRODUCT CODES FOUND ({len(product_code_info)} unique codes):")
+            # Filter to only show product codes with >= 2 devices
             sorted_codes = sorted(product_code_info.items(), key=lambda x: x[1]["count"], reverse=True)
-            for code, info in sorted_codes:
-                lines.append(f"  {code}: {info['name']} ({info['count']} devices)")
+            filtered_codes = [(code, info) for code, info in sorted_codes if info["count"] >= 2]
+
+            if filtered_codes:
+                lines.append(f"\nPRODUCT CODES FOUND ({len(filtered_codes)} codes with 2+ devices):")
+                for code, info in filtered_codes:
+                    lines.append(f"  {code}: {info['name']} ({info['count']} devices)")
+            else:
+                lines.append(f"\nNo product codes found with 2+ matching devices.")
 
         if company_counts:
             lines.append("\nTOP MANUFACTURERS:")

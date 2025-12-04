@@ -204,15 +204,23 @@ class DeviceResolver:
 
         return matches
 
-    def search_fuzzy(self, query: str, min_confidence: float = 0.7, limit: int = 100, progress_callback=None) -> List[DeviceMatch]:
-        """Search for fuzzy matches across text fields."""
+    def search_fuzzy(self, query: str, min_confidence: float = 0.7, limit: int = 100, progress_callback=None, min_devices_per_code: int = 2) -> List[DeviceMatch]:
+        """Search for fuzzy matches across text fields.
+
+        Args:
+            query: Search query
+            min_confidence: Minimum confidence for fuzzy matches
+            limit: Maximum results
+            progress_callback: Callback for progress updates
+            min_devices_per_code: Minimum devices a product code must have to be included (default 2)
+        """
         if not self.conn:
             self.connect()
 
         matches = []
 
         if progress_callback:
-            progress_callback("brand names", len(matches))
+            progress_callback("Stage 1/5: brand names", len(matches))
         # Search brand name (fuzzy)
         brand_results = self.conn.execute("""
             SELECT * FROM devices
@@ -239,7 +247,7 @@ class DeviceResolver:
                 ))
 
         if progress_callback:
-            progress_callback("device descriptions", len(matches))
+            progress_callback("Stage 2/5: device descriptions", len(matches))
         # Search device description (fuzzy) with better relevance ordering
         desc_results = self.conn.execute("""
             SELECT * FROM devices
@@ -275,7 +283,7 @@ class DeviceResolver:
             ))
 
         if progress_callback:
-            progress_callback("company names", len(matches))
+            progress_callback("Stage 3/5: company names", len(matches))
         # Search company name (fuzzy)
         company_results = self.conn.execute("""
             SELECT * FROM devices
@@ -298,7 +306,7 @@ class DeviceResolver:
                 ))
 
         if progress_callback:
-            progress_callback("GMDN terms", len(matches))
+            progress_callback("Stage 4/5: GMDN terms", len(matches))
         # Search GMDN terms (fuzzy)
         gmdn_results = self.conn.execute("""
             SELECT DISTINCT d.* FROM devices d
@@ -330,7 +338,7 @@ class DeviceResolver:
                 ))
 
         if progress_callback:
-            progress_callback("product codes", len(matches))
+            progress_callback("Stage 5/5: product codes", len(matches))
         # Search product code names (fuzzy)
         product_code_results = self.conn.execute("""
             SELECT DISTINCT d.*, pc.product_code, pc.product_code_name
@@ -353,6 +361,32 @@ class DeviceResolver:
                 confidence=confidence
             ))
 
+        # Filter to only include devices with product codes that have >= min_devices_per_code matches
+        if min_devices_per_code > 1 and matches:
+            if progress_callback:
+                progress_callback("Filtering by product code frequency", len(matches))
+
+            # Count devices per product code
+            product_code_counts: Dict[str, int] = {}
+            for match in matches:
+                for pc in match.device.get_product_codes():
+                    product_code_counts[pc] = product_code_counts.get(pc, 0) + 1
+
+            # Get product codes that meet the threshold
+            qualifying_codes = {pc for pc, count in product_code_counts.items() if count >= min_devices_per_code}
+
+            # Filter matches to only those with qualifying product codes
+            filtered_matches = []
+            for match in matches:
+                device_codes = set(match.device.get_product_codes())
+                if device_codes & qualifying_codes:  # intersection - has at least one qualifying code
+                    filtered_matches.append(match)
+
+            if progress_callback:
+                progress_callback(f"Filtered to {len(qualifying_codes)} product codes", len(filtered_matches))
+
+            return filtered_matches
+
         return matches
 
     def _normalize_query(self, query: str) -> list[str]:
@@ -367,7 +401,7 @@ class DeviceResolver:
             variants.append(q_lower[:-2])
         return list(set(variants))
 
-    def resolve(self, query: str, limit: int = 100, fuzzy: bool = True, min_confidence: float = 0.7, progress_callback=None) -> ResolverResponse:
+    def resolve(self, query: str, limit: int = 100, fuzzy: bool = True, min_confidence: float = 0.7, progress_callback=None, min_devices_per_code: int = 2) -> ResolverResponse:
         """
         Main resolve method that combines exact and fuzzy matching.
 
@@ -377,6 +411,7 @@ class DeviceResolver:
             fuzzy: Whether to include fuzzy matches
             min_confidence: Minimum confidence score for fuzzy matches
             progress_callback: Optional callback function(step: str, count: int) for progress updates
+            min_devices_per_code: Minimum devices a product code must have to be included (default 2)
 
         Returns:
             ResolverResponse with all matching devices
@@ -390,13 +425,11 @@ class DeviceResolver:
         all_matches = []
         for variant in query_variants:
             if progress_callback:
-                progress_callback("exact matches", len(all_matches))
+                progress_callback("Searching exact matches", len(all_matches))
             exact_matches = self.search_exact(variant, limit)
             all_matches.extend(exact_matches)
             if fuzzy:
-                if progress_callback:
-                    progress_callback("fuzzy matches", len(all_matches))
-                fuzzy_matches = self.search_fuzzy(variant, min_confidence, limit * 2, progress_callback=progress_callback)
+                fuzzy_matches = self.search_fuzzy(variant, min_confidence, limit * 2, progress_callback=progress_callback, min_devices_per_code=min_devices_per_code)
                 all_matches.extend(fuzzy_matches)
 
         seen_combinations = set()
