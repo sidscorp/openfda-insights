@@ -24,6 +24,7 @@ from .tools import (
     SearchUDITool,
     SearchRegistrationsTool,
     LocationResolverTool,
+    AggregateRegistrationsTool,
 )
 from ..config import get_config
 from ..llm_factory import LLMFactory
@@ -215,6 +216,7 @@ class FDAAgent:
         provider: str = "openrouter",
         model: Optional[str] = None,
         enable_persistence: bool = True,
+        guard_model: Optional[str] = None,
         **kwargs
     ):
         """
@@ -224,6 +226,7 @@ class FDAAgent:
             provider: LLM provider ("openrouter", "bedrock", "ollama")
             model: Model name (provider-specific). If None, uses provider default.
             enable_persistence: Whether to enable session persistence for multi-turn chat
+            guard_model: Optional cheaper/different model for the guardrail pass
             **kwargs: Additional provider-specific arguments (e.g., region for bedrock)
         """
         config = get_config()
@@ -234,6 +237,11 @@ class FDAAgent:
             model=model,
             temperature=0.1,
             **kwargs
+        )
+        # Guardrail model can be cheaper/different; falls back to primary LLM.
+        self.guard_llm = (
+            self.llm if guard_model is None
+            else LLMFactory.create(provider=provider, model=guard_model, temperature=0.0, **kwargs)
         )
 
         self.tools = self._create_tools(config)
@@ -248,6 +256,7 @@ class FDAAgent:
         self._manufacturer_resolver = ManufacturerResolverTool(db_path=config.gudid_db_path)
         self._recalls_tool = SearchRecallsTool(api_key=fda_api_key)
         self._location_resolver = LocationResolverTool(api_key=fda_api_key)
+        self._aggregations_tool = AggregateRegistrationsTool(api_key=fda_api_key)
 
         self._resolver_tools = {
             "resolve_device": self._device_resolver,
@@ -266,6 +275,7 @@ class FDAAgent:
             SearchUDITool(api_key=fda_api_key),
             SearchRegistrationsTool(api_key=fda_api_key),
             self._location_resolver,
+            self._aggregations_tool,
         ]
 
     def _build_graph(self) -> StateGraph:
@@ -273,15 +283,17 @@ class FDAAgent:
 
         workflow.add_node("agent", self._call_model)
         workflow.add_node("tools", ContextAwareToolNode(self.tools, self._resolver_tools))
+        workflow.add_node("guard", self._guard_response)
 
         workflow.set_entry_point("agent")
 
         workflow.add_conditional_edges(
             "agent",
             self._should_continue,
-            {"continue": "tools", "end": END}
+            {"continue": "tools", "end": "guard"}
         )
         workflow.add_edge("tools", "agent")
+        workflow.add_edge("guard", END)
 
         return workflow.compile(checkpointer=self._checkpointer)
 
@@ -300,6 +312,35 @@ class FDAAgent:
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
             return "continue"
         return "end"
+
+    def _guard_response(self, state: AgentState) -> dict:
+        """
+        Lightweight guardrail: verify the final answer against tool outputs.
+        Rewrites the answer to align with tool data when unsupported claims appear.
+        """
+        review_prompt = (
+            "You are a response auditor. Review the conversation and the final assistant answer.\n"
+            "- Use only facts contained in prior tool outputs (ToolMessage content) and provided context.\n"
+            "- If the final answer makes claims not supported by tool data or contradicts it, rewrite the answer to be fully grounded, "
+            "explicitly noting when data is unavailable.\n"
+            "- If the answer is already supported, return it unchanged.\n"
+            "- Never return an empty reply. If you cannot improve the answer, return it unchanged.\n"
+            "- Never invent counts, rankings, or firm names. If data is missing, say so plainly.\n"
+            "- Output only the vetted answer; do not add commentary about the audit process."
+        )
+
+        guard_messages = [SystemMessage(content=review_prompt)] + list(state["messages"])
+        review = self.guard_llm.invoke(guard_messages)
+        # Fallback: if guard returns empty/whitespace, keep the original final answer.
+        content = getattr(review, "content", "")
+        original = state["messages"][-1]
+        original_content = getattr(original, "content", "")
+        if not str(content).strip():
+            return {"messages": [original]}
+        # If the guard response is much shorter than the original (likely dropped data), keep the original.
+        if len(str(content).strip()) < max(10, 0.3 * len(str(original_content).strip())) and str(original_content).strip():
+            return {"messages": [original]}
+        return {"messages": [review]}
 
     def ask(self, question: str, session_id: Optional[str] = None) -> AgentResponse:
         """

@@ -11,6 +11,7 @@ from .classifications_tool import SearchClassificationsTool
 from .udi_tool import SearchUDITool
 from .registrations_tool import SearchRegistrationsTool
 from .location_resolver import LocationResolverTool
+from .aggregation_tool import AggregateRegistrationsTool
 
 __all__ = [
     "DeviceResolverTool",
@@ -23,4 +24,5 @@ __all__ = [
     "SearchUDITool",
     "SearchRegistrationsTool",
     "LocationResolverTool",
+    "AggregateRegistrationsTool",
 ]
