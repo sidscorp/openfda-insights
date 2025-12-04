@@ -629,12 +629,7 @@ def build_gudid(ctx, release_dir, output):
 
     try:
         indexer = GUDIDIndexer(output)
-        indexer.connect()
-        indexer.create_tables()
-
-        with console.status("[bold green]Indexing GUDID files...[/bold green]") as status:
-            indexer.index_directory(release_dir)
-
+        indexer.index_directory(release_dir)
         indexer.verify_index()
         indexer.close()
 
