@@ -65,11 +65,18 @@ class DeviceResolverTool(BaseTool):
                 self._resolver.connect()
 
             start_time = time.time()
-            response = self._resolver.resolve(query, limit=limit, fuzzy=True, progress_callback=self._emit_progress)
+
+            # Use fast SQL aggregation for better performance
+            fast_results = self._resolver.get_product_codes_fast(
+                query,
+                min_devices=2,
+                limit=limit,
+                progress_callback=self._emit_progress
+            )
             execution_time = (time.time() - start_time) * 1000
 
-            self._last_structured_result = self._to_structured(query, response, execution_time)
-            return self._format_results(query, response)
+            self._last_structured_result = self._to_structured_fast(query, fast_results, execution_time)
+            return self._format_results_fast(query, fast_results, execution_time)
 
         except Exception as e:
             self._last_structured_result = None
@@ -222,6 +229,53 @@ class DeviceResolverTool(BaseTool):
             lines.append(f"     >>> Matched text: \"{match_value}\"")
             lines.append(f"     >>> Confidence: {match.confidence:.0%}")
             lines.append("")
+
+        return "\n".join(lines)
+
+    def _to_structured_fast(self, query: str, fast_results: dict, execution_time: float) -> ResolvedEntities:
+        """Convert fast query results to structured format."""
+        product_codes = [
+            ProductCodeInfo(
+                code=pc["code"],
+                name=pc["name"],
+                device_count=pc["device_count"]
+            )
+            for pc in fast_results["product_codes"]
+        ]
+
+        manufacturers = [
+            ManufacturerInfo(name=c["name"], device_count=c["device_count"])
+            for c in fast_results["companies"]
+        ]
+
+        return ResolvedEntities(
+            query=query,
+            product_codes=product_codes,
+            manufacturers=manufacturers,
+            devices=[],  # Fast mode doesn't fetch individual devices
+            total_devices_matched=fast_results["total_devices"],
+            resolution_time_ms=execution_time
+        )
+
+    def _format_results_fast(self, query: str, fast_results: dict, execution_time: float) -> str:
+        """Format fast query results for the agent."""
+        total = fast_results["total_devices"]
+        product_codes = fast_results["product_codes"]
+        companies = fast_results["companies"]
+
+        if not product_codes:
+            return f"No devices found matching '{query}' with 2+ devices per product code."
+
+        lines = [f"Found {total} devices matching '{query}' (searched in {execution_time:.0f}ms):\n"]
+
+        lines.append(f"PRODUCT CODES FOUND ({len(product_codes)} codes with 2+ devices):")
+        for pc in product_codes:
+            lines.append(f"  {pc['code']}: {pc['name']} ({pc['device_count']} devices)")
+
+        if companies:
+            lines.append("\nTOP MANUFACTURERS:")
+            for c in companies[:10]:
+                lines.append(f"  {c['name']}: {c['device_count']} devices")
 
         return "\n".join(lines)
 

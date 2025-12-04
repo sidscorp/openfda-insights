@@ -204,6 +204,93 @@ class DeviceResolver:
 
         return matches
 
+    def get_product_codes_fast(self, query: str, min_devices: int = 2, limit: int = 100, progress_callback=None) -> Dict[str, Any]:
+        """
+        Fast SQL-level aggregation to get product codes matching a query.
+        Much faster than search_fuzzy as it doesn't build full DeviceConcepts.
+
+        Returns dict with product_codes, companies, and sample devices.
+        """
+        if not self.conn:
+            self.connect()
+
+        if progress_callback:
+            progress_callback("Searching product codes (fast mode)", 0)
+
+        # Single query to get product codes with counts - searches across all relevant fields
+        # Aggregate by product_code only (not product_code_name) to avoid duplicates from case differences
+        results = self.conn.execute("""
+            WITH matching_devices AS (
+                SELECT DISTINCT d.public_device_record_key, d.brand_name, d.company_name, d.device_description
+                FROM devices d
+                LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+                LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
+                WHERE d.brand_name ILIKE ?
+                   OR d.device_description ILIKE ?
+                   OR d.company_name ILIKE ?
+                   OR pc.product_code_name ILIKE ?
+                   OR g.gmdn_pt_name ILIKE ?
+            )
+            SELECT
+                pc.product_code,
+                MAX(pc.product_code_name) as product_code_name,
+                COUNT(DISTINCT md.public_device_record_key) as device_count
+            FROM matching_devices md
+            JOIN product_codes pc ON md.public_device_record_key = pc.device_key
+            GROUP BY pc.product_code
+            HAVING COUNT(DISTINCT md.public_device_record_key) >= ?
+            ORDER BY device_count DESC
+            LIMIT ?
+        """, [f"%{query}%"] * 5 + [min_devices, limit]).fetchall()
+
+        product_codes = [
+            {"code": row[0], "name": row[1], "device_count": row[2]}
+            for row in results
+        ]
+
+        if progress_callback:
+            progress_callback(f"Found {len(product_codes)} product codes", len(product_codes))
+
+        # Get top companies (fast)
+        company_results = self.conn.execute("""
+            SELECT d.company_name, COUNT(DISTINCT d.public_device_record_key) as device_count
+            FROM devices d
+            LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+            LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
+            WHERE d.company_name IS NOT NULL
+              AND (d.brand_name ILIKE ?
+                   OR d.device_description ILIKE ?
+                   OR pc.product_code_name ILIKE ?
+                   OR g.gmdn_pt_name ILIKE ?)
+            GROUP BY d.company_name
+            ORDER BY device_count DESC
+            LIMIT 20
+        """, [f"%{query}%"] * 4).fetchall()
+
+        companies = [
+            {"name": row[0], "device_count": row[1]}
+            for row in company_results
+        ]
+
+        # Get total device count
+        total_count = self.conn.execute("""
+            SELECT COUNT(DISTINCT d.public_device_record_key)
+            FROM devices d
+            LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+            LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
+            WHERE d.brand_name ILIKE ?
+               OR d.device_description ILIKE ?
+               OR pc.product_code_name ILIKE ?
+               OR g.gmdn_pt_name ILIKE ?
+        """, [f"%{query}%"] * 4).fetchone()[0]
+
+        return {
+            "query": query,
+            "total_devices": total_count,
+            "product_codes": product_codes,
+            "companies": companies
+        }
+
     def search_fuzzy(self, query: str, min_confidence: float = 0.7, limit: int = 100, progress_callback=None, min_devices_per_code: int = 2) -> List[DeviceMatch]:
         """Search for fuzzy matches across text fields.
 
