@@ -204,7 +204,7 @@ async def agent_stream(
                             yield f"data: {json.dumps({'type': 'thinking', 'content': last_message.content[:200]})}\n\n"
 
             final_result = agent.ask(question, session_id=session_id)
-            yield f"data: {json.dumps({'type': 'complete', 'answer': final_result.content, 'model': final_result.model, 'tokens': final_result.total_tokens})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'answer': final_result.content, 'model': final_result.model, 'tokens': final_result.total_tokens, 'structured_data': final_result.structured.model_dump()})}\n\n"
 
         except Exception as e:
             logger.error(f"Stream error: {e}")

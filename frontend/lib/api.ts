@@ -39,7 +39,7 @@ export type AgentStreamEvent =
   | { type: 'thinking'; content: string }
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_result'; content: string }
-  | { type: 'complete'; answer: string; model?: string; tokens?: number }
+  | { type: 'complete'; answer: string; model?: string; tokens?: number; structured_data?: any }
   | { type: 'error'; message: string }
 
 export interface SearchRequest {

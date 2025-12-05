@@ -41,10 +41,14 @@ Best for questions like "mask manufacturers by country" or "per product code cou
     args_schema: Type[BaseModel] = AggregateRegistrationsInput
 
     _client: OpenFDAClient
+    _last_structured_result: Optional[dict] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._client = OpenFDAClient(api_key=api_key)
+
+    def get_last_structured_result(self) -> Optional[dict]:
+        return self._last_structured_result
 
     def _run(
         self,
@@ -54,6 +58,8 @@ Best for questions like "mask manufacturers by country" or "per product code cou
         include_establishments: bool = False,
         max_establishments: int = 25,
     ) -> str:
+        self._last_structured_result = None
+        
         if not query and not product_codes:
             return "Provide a query (e.g., 'mask') or product_codes to aggregate."
 
@@ -63,10 +69,20 @@ Best for questions like "mask manufacturers by country" or "per product code cou
             search_base = f"(proprietary_name:{query} OR products.openfda.device_name:{query})"
 
         lines: list[str] = []
+        structured_data = {
+            "query": query,
+            "product_codes": product_codes,
+            "aggregations": []
+        }
 
         # Country rollup for the query as a whole.
         if search_base:
             country_counts = self._count("registration.iso_country_code", search_base)
+            structured_data["aggregations"].append({
+                "type": "query_country_counts",
+                "filter": query,
+                "counts": country_counts
+            })
             lines.append(f"Country counts for '{query}' registrations:")
             if country_counts:
                 for c in country_counts[:max_countries]:
@@ -80,11 +96,16 @@ Best for questions like "mask manufacturers by country" or "per product code cou
             for code in product_codes:
                 search = search_base
                 if search:
-                    search = f"{search} AND products.openfda.product_code:{code}"
+                    search = f"{search} AND products.product_code:{code}"
                 else:
-                    search = f"products.openfda.product_code:{code}"
+                    search = f"products.product_code:{code}"
 
                 country_counts = self._count("registration.iso_country_code", search)
+                structured_data["aggregations"].append({
+                    "type": "product_code_country_counts",
+                    "filter": code,
+                    "counts": country_counts
+                })
                 lines.append(f"Country counts for product code {code}:")
                 if country_counts:
                     for c in country_counts[:max_countries]:
@@ -96,6 +117,7 @@ Best for questions like "mask manufacturers by country" or "per product code cou
         if include_establishments and search_base:
             lines.append(f"Sample establishments for '{query}' (first {max_establishments} results):")
             establishments = self._fetch_establishments(search_base, max_establishments)
+            structured_data["establishments"] = establishments
             if establishments:
                 for est in establishments:
                     loc = ", ".join(part for part in [est.get("city"), est.get("state"), est.get("country")] if part)
@@ -107,6 +129,7 @@ Best for questions like "mask manufacturers by country" or "per product code cou
         if not lines:
             return "No aggregation results."
 
+        self._last_structured_result = structured_data
         return "\n".join(lines).rstrip()
 
     def _count(self, field: str, search: str) -> list[dict]:

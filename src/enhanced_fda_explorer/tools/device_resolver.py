@@ -217,19 +217,30 @@ class DeviceResolver:
         if progress_callback:
             progress_callback("Searching product codes (fast mode)", 0)
 
+        # Generate query variants (singular/plural)
+        query_variants = self._normalize_query(query)
+
+        # Build OR conditions for all variants
+        variant_conditions = []
+        params = []
+        for variant in query_variants:
+            variant_conditions.append("""
+                (d.brand_name ILIKE ? OR d.device_description ILIKE ? OR d.company_name ILIKE ?
+                 OR pc.product_code_name ILIKE ? OR pc.product_code ILIKE ? OR g.gmdn_pt_name ILIKE ?)
+            """)
+            params.extend([f"%{variant}%"] * 6)
+
+        where_clause = " OR ".join(variant_conditions)
+
         # Single query to get product codes with counts - searches across all relevant fields
         # Aggregate by product_code only (not product_code_name) to avoid duplicates from case differences
-        results = self.conn.execute("""
+        results = self.conn.execute(f"""
             WITH matching_devices AS (
                 SELECT DISTINCT d.public_device_record_key, d.brand_name, d.company_name, d.device_description
                 FROM devices d
                 LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
                 LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
-                WHERE d.brand_name ILIKE ?
-                   OR d.device_description ILIKE ?
-                   OR d.company_name ILIKE ?
-                   OR pc.product_code_name ILIKE ?
-                   OR g.gmdn_pt_name ILIKE ?
+                WHERE {where_clause}
             )
             SELECT
                 pc.product_code,
@@ -241,7 +252,7 @@ class DeviceResolver:
             HAVING COUNT(DISTINCT md.public_device_record_key) >= ?
             ORDER BY device_count DESC
             LIMIT ?
-        """, [f"%{query}%"] * 5 + [min_devices, limit]).fetchall()
+        """, params + [min_devices, limit]).fetchall()
 
         product_codes = [
             {"code": row[0], "name": row[1], "device_count": row[2]}
@@ -252,20 +263,16 @@ class DeviceResolver:
             progress_callback(f"Found {len(product_codes)} product codes", len(product_codes))
 
         # Get top companies (fast)
-        company_results = self.conn.execute("""
+        company_results = self.conn.execute(f"""
             SELECT d.company_name, COUNT(DISTINCT d.public_device_record_key) as device_count
             FROM devices d
             LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
             LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
-            WHERE d.company_name IS NOT NULL
-              AND (d.brand_name ILIKE ?
-                   OR d.device_description ILIKE ?
-                   OR pc.product_code_name ILIKE ?
-                   OR g.gmdn_pt_name ILIKE ?)
+            WHERE d.company_name IS NOT NULL AND ({where_clause})
             GROUP BY d.company_name
             ORDER BY device_count DESC
             LIMIT 20
-        """, [f"%{query}%"] * 4).fetchall()
+        """, params).fetchall()
 
         companies = [
             {"name": row[0], "device_count": row[1]}
@@ -273,16 +280,13 @@ class DeviceResolver:
         ]
 
         # Get total device count
-        total_count = self.conn.execute("""
+        total_count = self.conn.execute(f"""
             SELECT COUNT(DISTINCT d.public_device_record_key)
             FROM devices d
             LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
             LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
-            WHERE d.brand_name ILIKE ?
-               OR d.device_description ILIKE ?
-               OR pc.product_code_name ILIKE ?
-               OR g.gmdn_pt_name ILIKE ?
-        """, [f"%{query}%"] * 4).fetchone()[0]
+            WHERE {where_clause}
+        """, params).fetchone()[0]
 
         return {
             "query": query,
