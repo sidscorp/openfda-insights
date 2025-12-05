@@ -362,6 +362,8 @@ def chat(ctx, provider, model, session_id):
             # Capture initial state for artifact diffing
             initial_artifacts = agent.get_artifacts(sid)
             initial_count = len(initial_artifacts) if initial_artifacts else 0
+            
+            final_tool_call = None
 
             status.start()
             try:
@@ -374,10 +376,14 @@ def chat(ctx, provider, model, session_id):
                             all_ai_messages.append(msg)
                             if hasattr(msg, 'tool_calls') and msg.tool_calls:
                                 for tool_call in msg.tool_calls:
-                                    tool_count += 1
                                     tool_name = tool_call.get('name', 'unknown')
-                                    status.update(f"[bold green]Calling {tool_name}...[/bold green]")
-                            elif msg.content:
+                                    if tool_name == "respond_to_user":
+                                        final_tool_call = tool_call
+                                        status.update(f"[bold green]Formatting final response...[/bold green]")
+                                    else:
+                                        tool_count += 1
+                                        status.update(f"[bold green]Calling {tool_name}...[/bold green]")
+                            elif msg.content and not final_tool_call:
                                 final_response = msg
                         elif isinstance(msg, ToolMessage):
                             status.update(f"[bold green]Processing ({tool_count} tools called)...[/bold green]")
@@ -386,7 +392,108 @@ def chat(ctx, provider, model, session_id):
                 fda_logger.propagate = True
                 status.stop()
 
-            if final_response:
+            # 1. Handle Structured Tool Response (Priority)
+            if final_tool_call:
+                args = final_tool_call.get('args', {})
+                answer_text = args.get('answer', '')
+                artifact_ids = args.get('artifact_ids_to_display', [])
+                
+                console.print(Panel(
+                    answer_text,
+                    title="FDA Agent Response",
+                    border_style="green"
+                ))
+                
+                # Display ONLY the artifacts requested by the agent
+                all_artifacts = agent.get_artifacts(sid)
+                artifacts_to_show = [a for a in all_artifacts if a.id in artifact_ids]
+                
+                if not artifacts_to_show and artifact_ids:
+                    console.print(f"[yellow]Warning: Agent requested {len(artifact_ids)} artifacts but they were not found in the registry.[/yellow]")
+
+                for artifact in artifacts_to_show:
+                    # Render Device List Artifact
+                    if artifact.type == "resolved_entities":
+                        data = artifact.data
+                        if hasattr(data, "model_dump"):
+                            data = data.model_dump()
+                        
+                        product_codes = data.get("product_codes", [])
+                        manufacturers = data.get("manufacturers", [])
+
+                        if product_codes:
+                            table = Table(title=f"Data Artifact: Product Codes ({len(product_codes)} items)")
+                            table.add_column("Code", style="cyan", no_wrap=True)
+                            table.add_column("Name", style="white")
+                            table.add_column("Count", style="green", justify="right")
+
+                            for pc in product_codes[:10]:
+                                code = pc.get("code") if isinstance(pc, dict) else pc.code
+                                name = pc.get("name") if isinstance(pc, dict) else pc.name
+                                count = pc.get("device_count") if isinstance(pc, dict) else pc.device_count
+                                table.add_row(code, name, str(count))
+                            
+                            if len(product_codes) > 10:
+                                table.add_row("...", f"[dim]+ {len(product_codes) - 10} more...[/dim]", "")
+                            console.print(table)
+                            console.print()
+
+                        if manufacturers:
+                            manuf_table = Table(title=f"Data Artifact: Top Manufacturers ({len(manufacturers)} items)")
+                            manuf_table.add_column("Manufacturer", style="cyan", max_width=50)
+                            manuf_table.add_column("Count", style="green", justify="right")
+
+                            for manuf in manufacturers[:10]:
+                                name = manuf.get("name") if isinstance(manuf, dict) else manuf.name
+                                count = manuf.get("device_count") if isinstance(manuf, dict) else manuf.device_count
+                                manuf_table.add_row(name, str(count))
+                            
+                            if len(manufacturers) > 10:
+                                manuf_table.add_row("...", f"[dim]+ {len(manufacturers) - 10} more...[/dim]", "")
+                            console.print(manuf_table)
+                            console.print()
+
+                    elif artifact.type == "manufacturers_list":
+                        manuf_list = artifact.data
+                        if manuf_list:
+                            manuf_table = Table(title=f"Data Artifact: Manufacturers List ({len(manuf_list)} items)")
+                            manuf_table.add_column("Manufacturer", style="cyan", max_width=50)
+                            manuf_table.add_column("Count", style="green", justify="right")
+
+                            for manuf in manuf_list[:10]:
+                                name = manuf.get("name") if isinstance(manuf, dict) else manuf.name
+                                count = manuf.get("device_count") if isinstance(manuf, dict) else manuf.device_count
+                                manuf_table.add_row(name, str(count))
+                            
+                            if len(manuf_list) > 10:
+                                manuf_table.add_row("...", f"[dim]+ {len(manuf_list) - 10} more...[/dim]", "")
+                            console.print(manuf_table)
+                            console.print()
+
+                    elif artifact.type == "aggregated_registrations":
+                        data = artifact.data
+                        aggregations = data.get("aggregations", [])
+                        for agg in aggregations:
+                            counts = agg.get("counts", [])
+                            if counts:
+                                title = f"Data Artifact: Registrations by Country"
+                                if agg.get("filter"):
+                                    title += f" ({agg['filter']})"
+                                
+                                country_table = Table(title=title)
+                                country_table.add_column("Country", style="cyan")
+                                country_table.add_column("Count", style="green", justify="right")
+
+                                for c in counts[:15]:
+                                    country_table.add_row(c['term'], str(c['count']))
+                                
+                                if len(counts) > 15:
+                                    country_table.add_row("...", f"[dim]+ {len(counts) - 15} more...[/dim]")
+                                console.print(country_table)
+                                console.print()
+
+            # 2. Handle Legacy Text Response (Fallback)
+            elif final_response:
                 console.print(Panel(
                     final_response.content,
                     title="FDA Agent Response",
@@ -452,7 +559,9 @@ def chat(ctx, provider, model, session_id):
                             manuf_table.add_column("Count", style="green", justify="right")
 
                             for manuf in manuf_list[:10]:
-                                manuf_table.add_row(manuf.name, str(manuf.device_count))
+                                name = manuf.get("name") if isinstance(manuf, dict) else manuf.name
+                                count = manuf.get("device_count") if isinstance(manuf, dict) else manuf.device_count
+                                manuf_table.add_row(name, str(count))
                             
                             if len(manuf_list) > 10:
                                 manuf_table.add_row("...", f"[dim]+ {len(manuf_list) - 10} more...[/dim]", "")
@@ -482,6 +591,8 @@ def chat(ctx, provider, model, session_id):
                                     country_table.add_row("...", f"[dim]+ {len(counts) - 15} more...[/dim]")
                                 console.print(country_table)
                                 console.print()
+            
+            if final_tool_call or final_response:
                 total_input = 0
                 total_output = 0
                 total_cost = 0.0

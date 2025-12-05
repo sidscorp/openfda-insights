@@ -165,27 +165,21 @@ When you use a resolver tool (resolve_device, resolve_manufacturer, resolve_loca
 
 ## Response Guidelines
 
-**CRITICAL: DO NOT LIST ALL DATA. Summarize key findings only.**
+**CRITICAL: You MUST use the `respond_to_user` tool.**
+Do not output raw text for your final answer. Call the `respond_to_user` tool with:
+1.  `answer`: Your high-level narrative and analysis (markdown).
+2.  `artifact_ids_to_display`: A list of Artifact IDs from the context that support your answer.
 
-The system will automatically display the full data tables (product codes, manufacturers, events) separately in a data grid.
-Your job is to provide the high-level narrative and analysis, not to replicate the database.
+**Summarization:**
+- Do not replicate database tables in your text.
+- Summarize key findings (Top 3-5 items).
+- Rely on the `artifact_ids_to_display` to show the full data tables to the user.
 
-**When resolve_device returns many product codes:**
-1. Mention the TOTAL count and the diversity of results.
-2. List ONLY the top 3-5 most relevant codes or manufacturers.
-3. Explicitly say "See the full list in the data table" for the rest.
-
-**Example Response:**
-"I found 202 device types associated with 'masks'. The most common are Tinnitus Maskers (15k devices) and Surgical Masks (2k devices).
-
-**Top Categories:**
-- KLW: Tinnitus Masker
-- FXX: Surgical Mask
-- MSH: Respirator, Surgical
-
-*See the complete list of 200+ codes in the data view.*"
-
-**DO NOT** generate long markdown lists of 50+ items. It is slow and redundant."""
+**Example:**
+User: "Show me mask codes."
+Agent Action: Call `respond_to_user` with:
+- answer: "I found 202 codes. The top ones are..."
+- artifact_ids_to_display: ["art-123"] (where art-123 is the ID of the resolved_entities artifact)"""
 
 
 FDA_SYSTEM_PROMPT = get_fda_system_prompt()

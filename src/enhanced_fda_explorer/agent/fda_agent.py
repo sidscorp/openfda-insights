@@ -26,6 +26,7 @@ from .tools import (
     LocationResolverTool,
     AggregateRegistrationsTool,
 )
+from .tools.response_tool import RespondToUserTool
 from ..config import get_config
 from ..llm_factory import LLMFactory
 from ..models.responses import (
@@ -320,6 +321,7 @@ class FDAAgent:
         self._recalls_tool = SearchRecallsTool(api_key=fda_api_key)
         self._location_resolver = LocationResolverTool(api_key=fda_api_key)
         self._aggregations_tool = AggregateRegistrationsTool(api_key=fda_api_key)
+        self._response_tool = RespondToUserTool()
 
         self._resolver_tools = {
             "resolve_device": self._device_resolver,
@@ -339,6 +341,7 @@ class FDAAgent:
             SearchRegistrationsTool(api_key=fda_api_key),
             self._location_resolver,
             self._aggregations_tool,
+            self._response_tool,
         ]
 
     def _build_graph(self) -> StateGraph:
@@ -363,9 +366,34 @@ class FDAAgent:
     def _call_model(self, state: AgentState) -> dict:
         messages = list(state["messages"])
 
+        # Inject artifact context into system prompt
+        artifacts = state.get("artifacts", [])
+        artifact_context = ""
+        if artifacts:
+            artifact_list = "\n".join([
+                f"- ID: {a.id} | Type: {a.type} | Desc: {a.description}"
+                for a in artifacts
+            ])
+            artifact_context = (
+                "\n\n## Available Data Artifacts\n"
+                "You have created the following data artifacts in this session. "
+                "You can display them to the user by referencing their IDs in the `respond_to_user` tool:\n"
+                f"{artifact_list}"
+            )
+
         has_system = any(isinstance(m, SystemMessage) for m in messages)
         if not has_system:
-            messages = [SystemMessage(content=get_fda_system_prompt())] + messages
+            system_prompt = get_fda_system_prompt() + artifact_context
+            messages = [SystemMessage(content=system_prompt)] + messages
+        elif artifact_context:
+            # If system prompt exists, append artifact context to the last message if it's user, or inject a new system message
+            # Simplest: Replace the first system message with updated one
+            first_msg = messages[0]
+            if isinstance(first_msg, SystemMessage):
+                # We assume the first message is the main system prompt. 
+                # To avoid growing it infinitely, we should ideally rebuild it.
+                # For now, let's just append a fresh SystemMessage with the artifact context.
+                messages.append(SystemMessage(content=artifact_context))
 
         response = self.llm_with_tools.invoke(messages)
         return {"messages": [response]}
@@ -373,6 +401,10 @@ class FDAAgent:
     def _should_continue(self, state: AgentState) -> str:
         last_message = state["messages"][-1]
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+            # Check if the agent chose the final response tool
+            for tool_call in last_message.tool_calls:
+                if tool_call.get("name") == "respond_to_user":
+                    return "end"
             return "continue"
         return "end"
 
