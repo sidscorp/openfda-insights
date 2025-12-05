@@ -34,6 +34,14 @@ export interface MultiAgentResult {
   timestamp: string
 }
 
+export type AgentStreamEvent =
+  | { type: 'start'; question: string }
+  | { type: 'thinking'; content: string }
+  | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
+  | { type: 'tool_result'; content: string }
+  | { type: 'complete'; answer: string; model?: string; tokens?: number; structured_data?: any }
+  | { type: 'error'; message: string }
+
 export interface SearchRequest {
   query: string
   query_type?: 'device' | 'manufacturer' | 'recall'
@@ -265,6 +273,32 @@ class APIClient {
     }
 
     return eventSource
+  }
+
+  openAgentStream(
+    question: string,
+    handlers: {
+      onEvent?: (event: AgentStreamEvent) => void
+      onError?: (err: string) => void
+    }
+  ): EventSource {
+    const es = new EventSource(`${this.baseUrl}/agent/stream/${encodeURIComponent(question)}`)
+
+    es.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as AgentStreamEvent
+        handlers.onEvent?.(payload)
+      } catch (err) {
+        console.error('Failed to parse agent stream event', err)
+      }
+    }
+
+    es.onerror = () => {
+      es.close()
+      handlers.onError?.('Connection lost')
+    }
+
+    return es
   }
 }
 

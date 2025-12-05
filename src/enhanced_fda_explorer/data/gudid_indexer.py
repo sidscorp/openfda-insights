@@ -1,22 +1,180 @@
 """
 GUDID XML data indexer for DuckDB.
 Parses AccessGUDID XML files and creates searchable database.
+Optimized for fast bulk loading with parallel processing and native DataFrame inserts.
 """
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import duckdb
 from tqdm import tqdm
 import logging
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
+import pandas as pd
 
-# Only show INFO and above, not DEBUG
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 # XML namespace for GUDID
 GUDID_NS = {'gudid': 'http://www.fda.gov/cdrh/gudid'}
+
+# Batch size for bulk inserts
+BATCH_SIZE = 5000
+
+# Number of parallel workers (use all cores)
+NUM_WORKERS = max(1, multiprocessing.cpu_count() - 1)
+
+
+def _parse_xml_file(xml_path: str) -> Tuple[List[tuple], List[tuple], List[tuple], List[tuple]]:
+    """
+    Parse a single XML file and return extracted data.
+    This is a standalone function for multiprocessing.
+    Returns: (devices, identifiers, gmdn_terms, product_codes)
+    """
+    devices = []
+    identifiers = []
+    gmdn_terms = []
+    product_codes = []
+    indexed_at = datetime.now()
+
+    def get_text(elem, path, default=None):
+        found = elem.find(path, GUDID_NS)
+        if found is not None and found.text:
+            return found.text.strip()
+        return default
+
+    def get_bool(elem, path, default=False):
+        text = get_text(elem, path)
+        if text:
+            return text.lower() == 'true'
+        return default
+
+    try:
+        context = ET.iterparse(xml_path, events=('end',))
+
+        for event, elem in context:
+            if elem.tag == '{http://www.fda.gov/cdrh/gudid}device':
+                try:
+                    # Parse device data
+                    device_key = get_text(elem, 'gudid:publicDeviceRecordKey')
+                    primary_di = None
+
+                    # Parse identifiers
+                    identifiers_elem = elem.find('gudid:identifiers', GUDID_NS)
+                    if identifiers_elem:
+                        for identifier in identifiers_elem.findall('gudid:identifier', GUDID_NS):
+                            device_id = get_text(identifier, 'gudid:deviceId')
+                            if device_id:
+                                device_id_type = get_text(identifier, 'gudid:deviceIdType')
+                                if device_id_type == 'Primary':
+                                    primary_di = device_id
+                                pkg_qty = get_text(identifier, 'gudid:pkgQuantity')
+                                if pkg_qty:
+                                    try:
+                                        pkg_qty = int(pkg_qty)
+                                    except:
+                                        pkg_qty = None
+                                identifiers.append((
+                                    device_key, device_id, device_id_type,
+                                    get_text(identifier, 'gudid:deviceIdIssuingAgency'),
+                                    pkg_qty, get_text(identifier, 'gudid:pkgType')
+                                ))
+
+                    # Parse GMDN terms
+                    gmdn_elem = elem.find('gudid:gmdnTerms', GUDID_NS)
+                    if gmdn_elem:
+                        for gmdn in gmdn_elem.findall('gudid:gmdn', GUDID_NS):
+                            gmdn_code = get_text(gmdn, 'gudid:gmdnCode')
+                            if gmdn_code:
+                                gmdn_terms.append((
+                                    device_key, gmdn_code,
+                                    get_text(gmdn, 'gudid:gmdnPTName'),
+                                    get_text(gmdn, 'gudid:gmdnPTDefinition'),
+                                    get_bool(gmdn, 'gudid:implantable'),
+                                    get_text(gmdn, 'gudid:gmdnCodeStatus')
+                                ))
+
+                    # Parse product codes
+                    codes_elem = elem.find('gudid:productCodes', GUDID_NS)
+                    if codes_elem:
+                        for code in codes_elem.findall('gudid:fdaProductCode', GUDID_NS):
+                            pc = get_text(code, 'gudid:productCode')
+                            if pc:
+                                product_codes.append((
+                                    device_key, pc, get_text(code, 'gudid:productCodeName')
+                                ))
+
+                    # Parse device count
+                    device_count = get_text(elem, 'gudid:deviceCount')
+                    if device_count:
+                        try:
+                            device_count = int(device_count)
+                        except:
+                            device_count = None
+
+                    # Add device
+                    devices.append((
+                        device_key, primary_di,
+                        get_text(elem, 'gudid:brandName'),
+                        get_text(elem, 'gudid:versionModelNumber'),
+                        get_text(elem, 'gudid:catalogNumber'),
+                        get_text(elem, 'gudid:deviceDescription'),
+                        get_text(elem, 'gudid:companyName'),
+                        get_text(elem, 'gudid:dunsNumber'),
+                        device_count,
+                        get_text(elem, 'gudid:deviceCommDistributionStatus'),
+                        get_text(elem, 'gudid:devicePublishDate'),
+                        get_bool(elem, 'gudid:deviceCombinationProduct'),
+                        get_bool(elem, 'gudid:deviceKit'),
+                        get_bool(elem, 'gudid:singleUse'),
+                        get_bool(elem, 'gudid:deviceSterile'),
+                        get_bool(elem, 'gudid:rx'),
+                        get_bool(elem, 'gudid:otc'),
+                        indexed_at
+                    ))
+
+                except Exception:
+                    pass
+
+                elem.clear()
+
+    except ET.ParseError:
+        # Fallback for malformed XML
+        try:
+            with open(xml_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            if not content.rstrip().endswith('</gudid>'):
+                last_device_end = content.rfind('</device>')
+                if last_device_end > 0:
+                    content = content[:last_device_end + len('</device>')] + '\n</gudid>'
+                else:
+                    return devices, identifiers, gmdn_terms, product_codes
+
+            root = ET.fromstring(content)
+            for elem in root.findall('.//gudid:device', GUDID_NS):
+                # Same parsing logic (abbreviated for fallback)
+                device_key = get_text(elem, 'gudid:publicDeviceRecordKey')
+                if device_key:
+                    devices.append((
+                        device_key, None,
+                        get_text(elem, 'gudid:brandName'),
+                        get_text(elem, 'gudid:versionModelNumber'),
+                        get_text(elem, 'gudid:catalogNumber'),
+                        get_text(elem, 'gudid:deviceDescription'),
+                        get_text(elem, 'gudid:companyName'),
+                        get_text(elem, 'gudid:dunsNumber'),
+                        None, None, None, False, False, False, False, False, False, indexed_at
+                    ))
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+    return devices, identifiers, gmdn_terms, product_codes
 
 
 class GUDIDIndexer:
@@ -27,6 +185,12 @@ class GUDIDIndexer:
         self.db_path = db_path
         self.conn = None
         self.total_records = 0
+
+        # Batch buffers
+        self._devices_batch: List[tuple] = []
+        self._identifiers_batch: List[tuple] = []
+        self._gmdn_batch: List[tuple] = []
+        self._product_codes_batch: List[tuple] = []
 
     def connect(self):
         """Connect to DuckDB database."""
@@ -39,14 +203,20 @@ class GUDIDIndexer:
             self.conn.close()
             logger.info("Database connection closed")
 
-    def create_tables(self):
+    def create_tables(self, with_indexes: bool = False):
         """Create database tables for GUDID data."""
         if not self.conn:
             raise RuntimeError("Not connected to database")
 
+        # Drop existing tables for clean rebuild
+        self.conn.execute("DROP TABLE IF EXISTS device_identifiers")
+        self.conn.execute("DROP TABLE IF EXISTS gmdn_terms")
+        self.conn.execute("DROP TABLE IF EXISTS product_codes")
+        self.conn.execute("DROP TABLE IF EXISTS devices")
+
         # Main devices table
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS devices (
+            CREATE TABLE devices (
                 public_device_record_key VARCHAR PRIMARY KEY,
                 primary_di VARCHAR,
                 brand_name VARCHAR,
@@ -70,10 +240,9 @@ class GUDIDIndexer:
 
         # GMDN terms table
         self.conn.execute("""
-            CREATE SEQUENCE IF NOT EXISTS gmdn_terms_seq START 1;
-            CREATE TABLE IF NOT EXISTS gmdn_terms (
-                id INTEGER PRIMARY KEY DEFAULT nextval('gmdn_terms_seq'),
-                device_key VARCHAR REFERENCES devices(public_device_record_key),
+            CREATE TABLE gmdn_terms (
+                id INTEGER PRIMARY KEY,
+                device_key VARCHAR,
                 gmdn_code VARCHAR,
                 gmdn_pt_name VARCHAR,
                 gmdn_pt_definition TEXT,
@@ -84,10 +253,9 @@ class GUDIDIndexer:
 
         # Product codes table
         self.conn.execute("""
-            CREATE SEQUENCE IF NOT EXISTS product_codes_seq START 1;
-            CREATE TABLE IF NOT EXISTS product_codes (
-                id INTEGER PRIMARY KEY DEFAULT nextval('product_codes_seq'),
-                device_key VARCHAR REFERENCES devices(public_device_record_key),
+            CREATE TABLE product_codes (
+                id INTEGER PRIMARY KEY,
+                device_key VARCHAR,
                 product_code VARCHAR,
                 product_code_name VARCHAR
             )
@@ -95,10 +263,9 @@ class GUDIDIndexer:
 
         # Device identifiers table
         self.conn.execute("""
-            CREATE SEQUENCE IF NOT EXISTS device_identifiers_seq START 1;
-            CREATE TABLE IF NOT EXISTS device_identifiers (
-                id INTEGER PRIMARY KEY DEFAULT nextval('device_identifiers_seq'),
-                device_key VARCHAR REFERENCES devices(public_device_record_key),
+            CREATE TABLE device_identifiers (
+                id INTEGER PRIMARY KEY,
+                device_key VARCHAR,
                 device_id VARCHAR,
                 device_id_type VARCHAR,
                 device_id_issuing_agency VARCHAR,
@@ -107,16 +274,55 @@ class GUDIDIndexer:
             )
         """)
 
-        # Create indexes for search performance
+        if with_indexes:
+            self._create_indexes()
+
+        logger.info("Database tables created")
+
+    def _create_indexes(self):
+        """Create indexes for search performance (call after bulk load)."""
+        logger.info("Creating indexes...")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_brand_name ON devices(brand_name)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_company_name ON devices(company_name)")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_device_description ON devices(device_description)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_primary_di ON devices(primary_di)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_pc_device_key ON product_codes(device_key)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_product_code ON product_codes(product_code)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_gmdn_device_key ON gmdn_terms(device_key)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_gmdn_code ON gmdn_terms(gmdn_code)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_gmdn_name ON gmdn_terms(gmdn_pt_name)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_di_device_key ON device_identifiers(device_key)")
+        logger.info("Indexes created")
 
-        logger.info("Database tables and indexes created")
+    def _flush_batches(self):
+        """Flush all batch buffers to database."""
+        if self._devices_batch:
+            self.conn.executemany("""
+                INSERT OR REPLACE INTO devices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, self._devices_batch)
+            self._devices_batch = []
+
+        if self._identifiers_batch:
+            self.conn.executemany("""
+                INSERT INTO device_identifiers (id, device_key, device_id, device_id_type,
+                                               device_id_issuing_agency, pkg_quantity, pkg_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, self._identifiers_batch)
+            self._identifiers_batch = []
+
+        if self._gmdn_batch:
+            self.conn.executemany("""
+                INSERT INTO gmdn_terms (id, device_key, gmdn_code, gmdn_pt_name,
+                                        gmdn_pt_definition, implantable, gmdn_code_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, self._gmdn_batch)
+            self._gmdn_batch = []
+
+        if self._product_codes_batch:
+            self.conn.executemany("""
+                INSERT INTO product_codes (id, device_key, product_code, product_code_name)
+                VALUES (?, ?, ?, ?)
+            """, self._product_codes_batch)
+            self._product_codes_batch = []
 
     def parse_device(self, device_elem: ET.Element) -> Dict[str, Any]:
         """Parse a single device element from XML."""
@@ -166,7 +372,6 @@ class GUDIDIndexer:
                     'pkg_type': get_text(identifier, 'gudid:pkgType'),
                 }
                 identifiers.append(id_data)
-                # Set primary DI if this is the primary identifier
                 if id_data['device_id_type'] == 'Primary':
                     device_data['primary_di'] = id_data['device_id']
 
@@ -202,29 +407,113 @@ class GUDIDIndexer:
             'product_codes': product_codes
         }
 
-    def index_file(self, xml_path: str) -> int:
-        """Index a single GUDID XML file."""
+    def index_file(self, xml_path: str, id_counter: Dict[str, int]) -> int:
+        """Index a single GUDID XML file using streaming iterparse."""
         if not self.conn:
             raise RuntimeError("Not connected to database")
 
-        logger.info(f"Indexing file: {xml_path}")
+        indexed_count = 0
+        indexed_at = datetime.now()
 
-        # Read file content and try to fix truncated XML
+        try:
+            # Use iterparse for streaming - much faster for large files
+            context = ET.iterparse(xml_path, events=('end',))
+
+            for event, elem in context:
+                # Only process device elements
+                if elem.tag == '{http://www.fda.gov/cdrh/gudid}device':
+                    try:
+                        device_data = self.parse_device(elem)
+                        device = device_data['device']
+                        device['indexed_at'] = indexed_at
+
+                        # Convert device_count to int
+                        if device.get('device_count'):
+                            try:
+                                device['device_count'] = int(device['device_count'])
+                            except:
+                                device['device_count'] = None
+
+                        # Add to devices batch
+                        self._devices_batch.append(tuple(device.get(k) for k in [
+                            'public_device_record_key', 'primary_di', 'brand_name', 'version_model_number',
+                            'catalog_number', 'device_description', 'company_name', 'duns_number',
+                            'device_count', 'device_status', 'device_publish_date',
+                            'is_combination_product', 'is_kit', 'is_single_use', 'is_sterile',
+                            'is_rx', 'is_otc', 'indexed_at'
+                        ]))
+
+                        device_key = device['public_device_record_key']
+
+                        # Add identifiers to batch
+                        for identifier in device_data['identifiers']:
+                            if identifier.get('device_id'):
+                                id_counter['identifiers'] += 1
+                                pkg_qty = identifier.get('pkg_quantity')
+                                if pkg_qty:
+                                    try:
+                                        pkg_qty = int(pkg_qty)
+                                    except:
+                                        pkg_qty = None
+                                self._identifiers_batch.append((
+                                    id_counter['identifiers'], device_key, identifier['device_id'],
+                                    identifier['device_id_type'], identifier['device_id_issuing_agency'],
+                                    pkg_qty, identifier.get('pkg_type')
+                                ))
+
+                        # Add GMDN terms to batch
+                        for gmdn in device_data['gmdn_terms']:
+                            if gmdn.get('gmdn_code'):
+                                id_counter['gmdn'] += 1
+                                self._gmdn_batch.append((
+                                    id_counter['gmdn'], device_key, gmdn['gmdn_code'],
+                                    gmdn.get('gmdn_pt_name'), gmdn.get('gmdn_pt_definition'),
+                                    gmdn.get('implantable', False), gmdn.get('gmdn_code_status')
+                                ))
+
+                        # Add product codes to batch
+                        for code in device_data['product_codes']:
+                            if code.get('product_code'):
+                                id_counter['product_codes'] += 1
+                                self._product_codes_batch.append((
+                                    id_counter['product_codes'], device_key,
+                                    code['product_code'], code.get('product_code_name')
+                                ))
+
+                        indexed_count += 1
+
+                        # Flush batches when they get large
+                        if len(self._devices_batch) >= BATCH_SIZE:
+                            self._flush_batches()
+
+                    except Exception:
+                        pass
+
+                    # Clear element to free memory (critical for iterparse)
+                    elem.clear()
+
+            self.total_records += indexed_count
+            return indexed_count
+
+        except ET.ParseError:
+            # Handle truncated/malformed XML by falling back to manual repair
+            return self._index_file_fallback(xml_path, id_counter, indexed_at)
+        except Exception:
+            return 0
+
+    def _index_file_fallback(self, xml_path: str, id_counter: Dict[str, int], indexed_at: datetime) -> int:
+        """Fallback for truncated XML files - repairs and parses."""
         try:
             with open(xml_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
-            # If file is truncated, try to close open tags
             if not content.rstrip().endswith('</gudid>'):
-                # Find last complete device element
                 last_device_end = content.rfind('</device>')
                 if last_device_end > 0:
                     content = content[:last_device_end + len('</device>')] + '\n</gudid>'
                 else:
-                    # No complete devices found in this file
                     return 0
 
-            # Parse the (possibly repaired) content
             root = ET.fromstring(content)
             devices = root.findall('.//gudid:device', GUDID_NS)
             indexed_count = 0
@@ -232,22 +521,16 @@ class GUDIDIndexer:
             for device_elem in devices:
                 try:
                     device_data = self.parse_device(device_elem)
-
-                    # Insert main device record
                     device = device_data['device']
-                    device['indexed_at'] = datetime.now()
+                    device['indexed_at'] = indexed_at
 
-                    # Convert device_count to int if present
                     if device.get('device_count'):
                         try:
                             device['device_count'] = int(device['device_count'])
                         except:
                             device['device_count'] = None
 
-                    # Insert device
-                    self.conn.execute("""
-                        INSERT OR REPLACE INTO devices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, tuple(device.get(k) for k in [
+                    self._devices_batch.append(tuple(device.get(k) for k in [
                         'public_device_record_key', 'primary_di', 'brand_name', 'version_model_number',
                         'catalog_number', 'device_description', 'company_name', 'duns_number',
                         'device_count', 'device_status', 'device_publish_date',
@@ -255,77 +538,132 @@ class GUDIDIndexer:
                         'is_rx', 'is_otc', 'indexed_at'
                     ]))
 
-                    # Insert related records
                     device_key = device['public_device_record_key']
 
-                    # Insert identifiers (only if they exist and have required data)
                     for identifier in device_data['identifiers']:
-                        if identifier.get('device_id'):  # Only insert if device_id exists
-                            try:
-                                self.conn.execute("""
-                                    INSERT INTO device_identifiers (device_key, device_id, device_id_type,
-                                                                   device_id_issuing_agency, pkg_quantity, pkg_type)
-                                    VALUES (?, ?, ?, ?, ?, ?)
-                                """, (device_key, identifier['device_id'], identifier['device_id_type'],
-                                      identifier['device_id_issuing_agency'], identifier.get('pkg_quantity'),
-                                      identifier.get('pkg_type')))
-                            except Exception as e:
-                                logger.debug(f"Skipping identifier for device {device_key}: {e}")
+                        if identifier.get('device_id'):
+                            id_counter['identifiers'] += 1
+                            pkg_qty = identifier.get('pkg_quantity')
+                            if pkg_qty:
+                                try:
+                                    pkg_qty = int(pkg_qty)
+                                except:
+                                    pkg_qty = None
+                            self._identifiers_batch.append((
+                                id_counter['identifiers'], device_key, identifier['device_id'],
+                                identifier['device_id_type'], identifier['device_id_issuing_agency'],
+                                pkg_qty, identifier.get('pkg_type')
+                            ))
 
-                    # Insert GMDN terms (only if they exist and have required data)
                     for gmdn in device_data['gmdn_terms']:
-                        if gmdn.get('gmdn_code'):  # Only insert if gmdn_code exists
-                            try:
-                                self.conn.execute("""
-                                    INSERT INTO gmdn_terms (device_key, gmdn_code, gmdn_pt_name,
-                                                            gmdn_pt_definition, implantable, gmdn_code_status)
-                                    VALUES (?, ?, ?, ?, ?, ?)
-                                """, (device_key, gmdn['gmdn_code'], gmdn.get('gmdn_pt_name'),
-                                      gmdn.get('gmdn_pt_definition'), gmdn.get('implantable', False),
-                                      gmdn.get('gmdn_code_status')))
-                            except Exception as e:
-                                logger.debug(f"Skipping GMDN term for device {device_key}: {e}")
+                        if gmdn.get('gmdn_code'):
+                            id_counter['gmdn'] += 1
+                            self._gmdn_batch.append((
+                                id_counter['gmdn'], device_key, gmdn['gmdn_code'],
+                                gmdn.get('gmdn_pt_name'), gmdn.get('gmdn_pt_definition'),
+                                gmdn.get('implantable', False), gmdn.get('gmdn_code_status')
+                            ))
 
-                    # Insert product codes (only if they exist and have required data)
                     for code in device_data['product_codes']:
-                        if code.get('product_code'):  # Only insert if product_code exists
-                            try:
-                                self.conn.execute("""
-                                    INSERT INTO product_codes (device_key, product_code, product_code_name)
-                                    VALUES (?, ?, ?)
-                                """, (device_key, code['product_code'], code.get('product_code_name')))
-                            except Exception as e:
-                                logger.debug(f"Skipping product code for device {device_key}: {e}")
+                        if code.get('product_code'):
+                            id_counter['product_codes'] += 1
+                            self._product_codes_batch.append((
+                                id_counter['product_codes'], device_key,
+                                code['product_code'], code.get('product_code_name')
+                            ))
 
                     indexed_count += 1
 
-                except Exception as e:
-                    # Skip devices that fail to index silently
+                    if len(self._devices_batch) >= BATCH_SIZE:
+                        self._flush_batches()
+
+                except Exception:
                     continue
 
-            self.conn.commit()
             self.total_records += indexed_count
-            logger.info(f"Indexed {indexed_count} devices from {xml_path}")
             return indexed_count
 
-        except Exception as e:
-            # Skip files that fail to parse
+        except Exception:
             return 0
 
     def index_directory(self, directory: str):
-        """Index all GUDID XML files in a directory."""
+        """Index all GUDID XML files in a directory using parallel processing."""
         if not self.conn:
             self.connect()
 
-        self.create_tables()
+        # Create tables WITHOUT indexes for faster bulk loading
+        self.create_tables(with_indexes=False)
 
         xml_dir = Path(directory)
         xml_files = sorted(xml_dir.glob("*.xml"))
 
         logger.info(f"Found {len(xml_files)} XML files to index")
+        logger.info(f"Using {NUM_WORKERS} parallel workers")
 
-        for xml_file in tqdm(xml_files, desc="Indexing GUDID files"):
-            self.index_file(str(xml_file))
+        # Process files in parallel
+        all_devices = []
+        all_identifiers = []
+        all_gmdn = []
+        all_product_codes = []
+
+        with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+            futures = {executor.submit(_parse_xml_file, str(f)): f for f in xml_files}
+
+            for future in tqdm(as_completed(futures), total=len(xml_files), desc="Parsing XML files"):
+                try:
+                    devices, identifiers, gmdn_terms, product_codes = future.result()
+                    all_devices.extend(devices)
+                    all_identifiers.extend(identifiers)
+                    all_gmdn.extend(gmdn_terms)
+                    all_product_codes.extend(product_codes)
+                except Exception as e:
+                    logger.debug(f"Error processing file: {e}")
+
+        logger.info(f"Parsed {len(all_devices)} devices, inserting into database...")
+
+        # Use pandas DataFrames for fast bulk insert (DuckDB native support)
+        if all_devices:
+            logger.info("Inserting devices...")
+            df_devices = pd.DataFrame(all_devices, columns=[
+                'public_device_record_key', 'primary_di', 'brand_name', 'version_model_number',
+                'catalog_number', 'device_description', 'company_name', 'duns_number',
+                'device_count', 'device_status', 'device_publish_date',
+                'is_combination_product', 'is_kit', 'is_single_use', 'is_sterile',
+                'is_rx', 'is_otc', 'indexed_at'
+            ])
+            self.conn.execute("INSERT INTO devices SELECT * FROM df_devices")
+
+        if all_identifiers:
+            logger.info("Inserting device identifiers...")
+            df_identifiers = pd.DataFrame(all_identifiers, columns=[
+                'device_key', 'device_id', 'device_id_type',
+                'device_id_issuing_agency', 'pkg_quantity', 'pkg_type'
+            ])
+            df_identifiers.insert(0, 'id', range(1, len(df_identifiers) + 1))
+            self.conn.execute("INSERT INTO device_identifiers SELECT * FROM df_identifiers")
+
+        if all_gmdn:
+            logger.info("Inserting GMDN terms...")
+            df_gmdn = pd.DataFrame(all_gmdn, columns=[
+                'device_key', 'gmdn_code', 'gmdn_pt_name',
+                'gmdn_pt_definition', 'implantable', 'gmdn_code_status'
+            ])
+            df_gmdn.insert(0, 'id', range(1, len(df_gmdn) + 1))
+            self.conn.execute("INSERT INTO gmdn_terms SELECT * FROM df_gmdn")
+
+        if all_product_codes:
+            logger.info("Inserting product codes...")
+            df_product_codes = pd.DataFrame(all_product_codes, columns=[
+                'device_key', 'product_code', 'product_code_name'
+            ])
+            df_product_codes.insert(0, 'id', range(1, len(df_product_codes) + 1))
+            self.conn.execute("INSERT INTO product_codes SELECT * FROM df_product_codes")
+
+        self.conn.commit()
+        self.total_records = len(all_devices)
+
+        # Create indexes AFTER bulk load
+        self._create_indexes()
 
         logger.info(f"Indexing complete. Total records: {self.total_records}")
 
@@ -346,11 +684,10 @@ class GUDIDIndexer:
         if not self.conn:
             self.connect()
 
-        # Test queries
         test_queries = [
-            "SELECT COUNT(*) FROM devices WHERE brand_name LIKE '%mask%'",
-            "SELECT COUNT(*) FROM devices WHERE company_name LIKE '%3M%'",
-            "SELECT COUNT(*) FROM devices WHERE device_description LIKE '%needle%'",
+            "SELECT COUNT(*) FROM devices WHERE brand_name ILIKE '%mask%'",
+            "SELECT COUNT(*) FROM devices WHERE company_name ILIKE '%3M%'",
+            "SELECT COUNT(*) FROM devices WHERE device_description ILIKE '%needle%'",
             "SELECT COUNT(DISTINCT d.public_device_record_key) FROM devices d JOIN product_codes pc ON d.public_device_record_key = pc.device_key WHERE pc.product_code IN ('FXX', 'MSH', 'CBK')",
         ]
 
@@ -361,7 +698,6 @@ class GUDIDIndexer:
 
 
 if __name__ == "__main__":
-    # Index the GUDID data
     indexer = GUDIDIndexer("gudid.db")
     try:
         indexer.index_directory("gudid_full_release_20250804")

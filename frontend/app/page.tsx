@@ -1,186 +1,249 @@
 'use client'
 
-import { useState } from 'react'
-import EnhancedAgentProgress from '@/components/EnhancedAgentProgress'
-import { MultiAgentResult } from '@/lib/api'
-import styles from './page.module.css'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Box,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Container,
+  HStack,
+  Heading,
+  IconButton,
+  Input,
+  Spinner,
+  Stack,
+  Tag,
+  Text,
+  Textarea,
+  Tooltip,
+  useToast,
+  VStack,
+} from '@chakra-ui/react'
+import { CloseIcon } from '@chakra-ui/icons'
+import { apiClient, type AgentStreamEvent } from '@/lib/api'
+
+type Role = 'user' | 'assistant' | 'system'
+
+interface ChatMessage {
+  id: string
+  role: Role
+  content: string
+  streaming?: boolean
+}
+
+const starterPrompts = [
+  'Summarize recent adverse events for pacemakers',
+  'Any recalls for insulin pumps mentioning battery issues?',
+  'Compare MAUDE signals for endoscopy towers vs laparoscopic cameras',
+]
 
 export default function Home() {
-  const [query, setQuery] = useState('')
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [results, setResults] = useState<MultiAgentResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [input, setInput] = useState('')
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: 'system',
+      role: 'system',
+      content:
+        'I analyze FDA device data (MAUDE, recalls, 510(k), PMA). Ask about devices, manufacturers, risks, or trends.',
+    },
+  ])
+  const [isStreaming, setIsStreaming] = useState(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const toast = useToast()
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!query.trim() || isAnalyzing) return
+  const endOfChatRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    endOfChatRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
-    setIsAnalyzing(true)
-    setError(null)
-    setResults(null)
+  const canSend = input.trim().length > 0 && !isStreaming
+
+  const handleSend = (prompt?: string) => {
+    const text = prompt ?? input.trim()
+    if (!text || isStreaming) return
+
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: text,
+    }
+    const assistantMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: '',
+      streaming: true,
+    }
+
+    setMessages((prev) => [...prev, userMessage, assistantMessage])
+    setInput('')
+    setIsStreaming(true)
+
+    const es = apiClient.openAgentStream(text, {
+      onEvent: (event: AgentStreamEvent) => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantMessage.id) return m
+            switch (event.type) {
+              case 'thinking':
+              case 'tool_result':
+                return { ...m, content: (m.content + '\n' + event.content).trim(), streaming: true }
+              case 'complete':
+                return { ...m, content: event.answer, streaming: false }
+              case 'error':
+                return { ...m, content: `Error: ${event.message}`, streaming: false }
+              case 'tool_call':
+                return {
+                  ...m,
+                  content: (m.content + `\n[Running ${event.tool}...]`).trim(),
+                  streaming: true,
+                }
+              case 'start':
+              default:
+                return m
+            }
+          })
+        )
+
+        if (event.type === 'complete' || event.type === 'error') {
+          setIsStreaming(false)
+          es.close()
+          eventSourceRef.current = null
+        }
+      },
+      onError: (err) => {
+        setIsStreaming(false)
+        setMessages((prev) =>
+          prev.map((m) => (m.streaming ? { ...m, streaming: false, content: `${m.content}\n${err}` } : m))
+        )
+        toast({
+          title: 'Connection lost',
+          description: err || 'Check the API URL and server status.',
+          status: 'error',
+          duration: 4000,
+          isClosable: true,
+        })
+      },
+    })
+
+    eventSourceRef.current = es
   }
 
-  const handleComplete = (result: MultiAgentResult) => {
-    setResults(result)
-    setIsAnalyzing(false)
+  const handleStop = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+    setIsStreaming(false)
+    setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)))
   }
 
-  const handleError = (errorMessage: string) => {
-    setError(errorMessage)
-    setIsAnalyzing(false)
-  }
+  const guidance = useMemo(
+    () => ({
+      api: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api',
+    }),
+    []
+  )
 
   return (
-    <div className={styles.container}>
-      <header className={styles.header}>
-        <h1>🔬 FDA Multi-Agent Intelligence System</h1>
-        <p>Harness the power of specialized AI agents to analyze medical device data</p>
-      </header>
+    <Container maxW="5xl" py={{ base: 6, md: 10 }}>
+      <Stack spacing={6}>
+        <Card borderColor="blackAlpha.100">
+          <CardBody>
+            <Stack spacing={3} direction={{ base: 'column', md: 'row' }} justify="space-between" align="start">
+              <Box>
+                <Heading size="lg">FDA Explorer</Heading>
+                <Text color="gray.600">Ask questions about device events, recalls, and approvals.</Text>
+              </Box>
+              <Tag colorScheme={isStreaming ? 'green' : 'gray'} variant="subtle">
+                API: {guidance.api}
+              </Tag>
+            </Stack>
+          </CardBody>
+        </Card>
 
-      <form onSubmit={handleSubmit} className={styles.searchForm}>
-        <div className={styles.searchContainer}>
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Enter a device name, manufacturer, or safety concern..."
-            className={styles.searchInput}
-            disabled={isAnalyzing}
-          />
-          <button 
-            type="submit" 
-            className={styles.searchButton} 
-            disabled={!query.trim() || isAnalyzing}
-          >
-            <span className={styles.buttonIcon}>{isAnalyzing ? '⏳' : '🔍'}</span>
-            {isAnalyzing ? 'Analyzing...' : 'Analyze'}
-          </button>
-        </div>
-        
-        <div className={styles.examples}>
-          <span>Try:</span>
-          <button type="button" onClick={() => setQuery('3M masks')} className={styles.exampleButton}>
-            3M masks
-          </button>
-          <button type="button" onClick={() => setQuery('insulin pumps')} className={styles.exampleButton}>
-            insulin pumps
-          </button>
-          <button type="button" onClick={() => setQuery('Medtronic pacemakers')} className={styles.exampleButton}>
-            Medtronic pacemakers
-          </button>
-        </div>
-      </form>
+        <Card>
+          <CardHeader pb={2}>
+            <HStack justify="space-between">
+              <Text fontWeight="600" color="gray.600">
+                Chat
+              </Text>
+              {isStreaming && (
+                <Tooltip label="Stop streaming">
+                  <IconButton aria-label="Stop" icon={<CloseIcon boxSize={3} />} size="sm" onClick={handleStop} />
+                </Tooltip>
+              )}
+            </HStack>
+          </CardHeader>
+          <CardBody pt={0}>
+            <Stack spacing={4}>
+              <VStack align="stretch" spacing={4} maxH="60vh" overflowY="auto" pr={1}>
+                {messages.map((m) => (
+                  <MessageBubble key={m.id} message={m} />
+                ))}
+                <div ref={endOfChatRef} />
+              </VStack>
 
-      {error && (
-        <div className={styles.error}>
-          <span className={styles.errorIcon}>⚠️</span>
-          {error}
-        </div>
-      )}
+              <Stack direction={{ base: 'column', md: 'row' }} spacing={3}>
+                <Textarea
+                  placeholder="Ask about a device, manufacturer, or risk signal..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  isDisabled={isStreaming}
+                  rows={3}
+                />
+                <Button
+                  colorScheme="brand"
+                  onClick={() => handleSend()}
+                  isDisabled={!canSend}
+                  minW={{ md: '120px' }}
+                >
+                  {isStreaming ? 'Streaming...' : 'Send'}
+                </Button>
+              </Stack>
 
-      {(isAnalyzing || results) && (
-        <section className={styles.analysisSection}>
-          {isAnalyzing && (
-            <EnhancedAgentProgress
-              query={query}
-              isActive={isAnalyzing}
-              onComplete={handleComplete}
-              onError={handleError}
-            />
-          )}
+              <HStack spacing={2} wrap="wrap">
+                {starterPrompts.map((p) => (
+                  <Button key={p} size="sm" variant="outline" onClick={() => handleSend(p)} isDisabled={isStreaming}>
+                    {p}
+                  </Button>
+                ))}
+              </HStack>
+            </Stack>
+          </CardBody>
+        </Card>
+      </Stack>
+    </Container>
+  )
+}
 
-          {results && !isAnalyzing && (
-            <div className={styles.results}>
-              <h2>✨ Analysis Complete</h2>
-              
-              <div className={styles.intentCard}>
-                <h3>📊 Query Understanding</h3>
-                <p><strong>Intent:</strong> {results.intent.primary_intent}</p>
-                {results.intent.device_names.length > 0 && (
-                  <p><strong>Devices:</strong> {results.intent.device_names.join(', ')}</p>
-                )}
-                {results.intent.specific_concerns.length > 0 && (
-                  <p><strong>Concerns:</strong> {results.intent.specific_concerns.join(', ')}</p>
-                )}
-                <p><strong>Agents Activated:</strong> {results.intent.required_agents.length}</p>
-              </div>
+function MessageBubble({ message }: { message: ChatMessage }) {
+  const isUser = message.role === 'user'
+  const bg = isUser ? 'brand.50' : 'white'
+  const border = isUser ? 'brand.100' : 'gray.100'
 
-              <div className={styles.agentResults}>
-                {Object.entries(results.agent_results).map(([agentName, agentData]) => {
-                  const data = agentData[0]
-                  if (!data || !data.key_findings) return null
-
-                  const agentIcons: Record<string, string> = {
-                    events_specialist: '⚠️',
-                    recalls_specialist: '🔄',
-                    clearances_specialist: '✅',
-                    udi_specialist: '🏷️',
-                    classifications_specialist: '📊',
-                    pma_specialist: '🔬'
-                  }
-
-                  return (
-                    <div key={agentName} className={styles.agentCard}>
-                      <h3>
-                        <span className={styles.agentIcon}>{agentIcons[agentName] || '🤖'}</span>
-                        {agentName.replace('_specialist', '').replace('_', ' ').toUpperCase()} SPECIALIST
-                      </h3>
-                      
-                      <div className={styles.dataPoints}>
-                        {data.data_points ? `${data.data_points.toLocaleString()} records analyzed` : 'Analysis complete'}
-                      </div>
-
-                      <div className={styles.findings}>
-                        <h4>Key Findings</h4>
-                        {Array.isArray(data.key_findings) ? (
-                          <ul>
-                            {data.key_findings.slice(0, 5).map((finding: any, i: number) => (
-                              <li key={i}>
-                                {typeof finding === 'string' ? finding : finding.finding || JSON.stringify(finding)}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <div className={styles.structuredFindings}>
-                            {Object.entries(data.key_findings).map(([key, value]) => (
-                              <div key={key} className={styles.finding}>
-                                <strong>{key}:</strong>
-                                <p>{typeof value === 'string' ? value : JSON.stringify(value, null, 2)}</p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {data.recommendations && data.recommendations.length > 0 && (
-                        <div className={styles.recommendations}>
-                          <h4>Recommendations</h4>
-                          <ul>
-                            {data.recommendations.slice(0, 3).map((rec: string, i: number) => (
-                              <li key={i}>{rec}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-
-              <div className={styles.timestamp}>
-                Analysis completed at: {new Date(results.timestamp).toLocaleString()}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      <footer className={styles.footer}>
-        <p>
-          This system uses specialized AI agents to analyze FDA data. Results should be verified 
-          with official FDA sources.
-        </p>
-      </footer>
-    </div>
+  return (
+    <Box
+      alignSelf={isUser ? 'flex-end' : 'flex-start'}
+      maxW="90%"
+      bg={bg}
+      borderColor={border}
+      borderWidth="1px"
+      borderRadius="xl"
+      px={4}
+      py={3}
+      shadow="sm"
+    >
+      <HStack justify="space-between" mb={2}>
+        <Tag size="sm" colorScheme={isUser ? 'brand' : 'gray'}>
+          {isUser ? 'You' : message.role === 'system' ? 'System' : 'FDA Agent'}
+        </Tag>
+        {message.streaming && <Spinner size="sm" color="brand.500" />}
+      </HStack>
+      <Text whiteSpace="pre-wrap" color="gray.800">
+        {message.content || '...'}
+      </Text>
+    </Box>
   )
 }

@@ -26,6 +26,7 @@ from .tools import (
     LocationResolverTool,
     AggregateRegistrationsTool,
 )
+from .tools.response_tool import RespondToUserTool
 from ..config import get_config
 from ..llm_factory import LLMFactory
 from ..models.responses import (
@@ -37,6 +38,7 @@ from ..models.responses import (
     ToolExecution,
     TokenUsage,
 )
+from ..models.artifacts import DataArtifact, ArtifactType
 
 
 def _merge_context(existing: Optional[dict], new: Optional[dict]) -> dict:
@@ -62,6 +64,7 @@ class ResolverContext(TypedDict, total=False):
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
     resolver_context: Annotated[ResolverContext, _merge_context]
+    artifacts: Annotated[list[DataArtifact], operator.add]
     session_id: Optional[str]
 
 
@@ -111,11 +114,12 @@ class ContextAwareToolNode:
                     name=tool_name
                 ))
 
-        new_context = self._extract_resolver_context()
+        new_context, new_artifacts = self._extract_context_and_artifacts(last_message.tool_calls)
 
         return {
             "messages": tool_messages,
-            "resolver_context": new_context if new_context else None
+            "resolver_context": new_context if new_context else None,
+            "artifacts": new_artifacts if new_artifacts else None
         }
 
     async def ainvoke(self, state: AgentState) -> dict:
@@ -162,18 +166,43 @@ class ContextAwareToolNode:
             execute_tool(tc) for tc in last_message.tool_calls
         ])
 
-        new_context = self._extract_resolver_context()
+        new_context, new_artifacts = self._extract_context_and_artifacts(last_message.tool_calls)
 
         return {
             "messages": list(tool_messages),
-            "resolver_context": new_context if new_context else None
+            "resolver_context": new_context if new_context else None,
+            "artifacts": new_artifacts if new_artifacts else None
         }
 
-    def _extract_resolver_context(self) -> Optional[ResolverContext]:
-        """Extract structured results from resolver tools."""
+    def _extract_context_and_artifacts(self, tool_calls: list) -> tuple[Optional[ResolverContext], list[DataArtifact]]:
+        """Extract structured results and create artifacts from tool executions."""
         context: ResolverContext = {}
+        artifacts: list[DataArtifact] = []
+        
+        # Map tool calls to find arguments for artifact metadata
+        tool_args_map = {tc.get("name"): tc.get("args", {}) for tc in tool_calls}
 
         for tool_name, tool in self.resolver_tools.items():
+            # Also check aggregations tool which is now a "generator" of artifacts
+            if tool_name not in self.resolver_tools and tool_name != "aggregate_registrations":
+                 # We might want to add other tools here later
+                 pass
+
+        # Check all tools that might produce artifacts
+        # (We iterate through self.tools basically, but filtering for ones we know produce structure)
+        # Ideally we'd iterate over tool_calls, but we need the tool instance.
+        
+        # Let's check the specific tools we know about
+        tools_to_check = list(self.resolver_tools.items())
+        # Find aggregate tool in self.tools if it's not in resolver_tools dict yet (it wasn't passed in explicitly as such)
+        if "aggregate_registrations" in self.tools:
+            tools_to_check.append(("aggregate_registrations", self.tools["aggregate_registrations"]))
+
+        for tool_name, tool in tools_to_check:
+            # Only process if this tool was actually called in this step
+            if tool_name not in tool_args_map:
+                continue
+
             if not hasattr(tool, 'get_last_structured_result'):
                 continue
 
@@ -181,14 +210,49 @@ class ContextAwareToolNode:
             if result is None:
                 continue
 
+            # 1. Legacy Context Update
             if tool_name == "resolve_device":
                 context["devices"] = result
+                # Create Artifact
+                artifacts.append(DataArtifact(
+                    type="resolved_entities",
+                    description=f"Device resolution for '{result.query}'",
+                    data=result,
+                    tool_name=tool_name,
+                    tool_args=tool_args_map.get(tool_name, {})
+                ))
             elif tool_name == "resolve_manufacturer":
                 context["manufacturers"] = result
+                # Create Artifact (Need to define ManufacturerList model or just use raw list?)
+                # result is list[ManufacturerInfo]
+                artifacts.append(DataArtifact(
+                    type="manufacturers_list",
+                    description=f"Manufacturer resolution",
+                    data=result,
+                    tool_name=tool_name,
+                    tool_args=tool_args_map.get(tool_name, {})
+                ))
             elif tool_name == "resolve_location":
                 context["location"] = result
+                artifacts.append(DataArtifact(
+                    type="location_context",
+                    description=f"Location resolution for '{result.location_name}'",
+                    data=result,
+                    tool_name=tool_name,
+                    tool_args=tool_args_map.get(tool_name, {})
+                ))
+            elif tool_name == "aggregate_registrations":
+                # New artifact type!
+                query_term = result.get("query") or str(result.get("product_codes", "Unknown"))
+                artifacts.append(DataArtifact(
+                    type="aggregated_registrations",
+                    description=f"Registration counts for '{query_term}'",
+                    data=result,
+                    tool_name=tool_name,
+                    tool_args=tool_args_map.get(tool_name, {})
+                ))
 
-        return context if context else None
+        return (context if context else None, artifacts)
 
 
 @dataclass
@@ -257,6 +321,7 @@ class FDAAgent:
         self._recalls_tool = SearchRecallsTool(api_key=fda_api_key)
         self._location_resolver = LocationResolverTool(api_key=fda_api_key)
         self._aggregations_tool = AggregateRegistrationsTool(api_key=fda_api_key)
+        self._response_tool = RespondToUserTool()
 
         self._resolver_tools = {
             "resolve_device": self._device_resolver,
@@ -276,6 +341,7 @@ class FDAAgent:
             SearchRegistrationsTool(api_key=fda_api_key),
             self._location_resolver,
             self._aggregations_tool,
+            self._response_tool,
         ]
 
     def _build_graph(self) -> StateGraph:
@@ -300,9 +366,34 @@ class FDAAgent:
     def _call_model(self, state: AgentState) -> dict:
         messages = list(state["messages"])
 
+        # Inject artifact context into system prompt
+        artifacts = state.get("artifacts", [])
+        artifact_context = ""
+        if artifacts:
+            artifact_list = "\n".join([
+                f"- ID: {a.id} | Type: {a.type} | Desc: {a.description}"
+                for a in artifacts
+            ])
+            artifact_context = (
+                "\n\n## Available Data Artifacts\n"
+                "You have created the following data artifacts in this session. "
+                "You can display them to the user by referencing their IDs in the `respond_to_user` tool:\n"
+                f"{artifact_list}"
+            )
+
         has_system = any(isinstance(m, SystemMessage) for m in messages)
         if not has_system:
-            messages = [SystemMessage(content=get_fda_system_prompt())] + messages
+            system_prompt = get_fda_system_prompt() + artifact_context
+            messages = [SystemMessage(content=system_prompt)] + messages
+        elif artifact_context:
+            # If system prompt exists, append artifact context to the last message if it's user, or inject a new system message
+            # Simplest: Replace the first system message with updated one
+            first_msg = messages[0]
+            if isinstance(first_msg, SystemMessage):
+                # We assume the first message is the main system prompt. 
+                # To avoid growing it infinitely, we should ideally rebuild it.
+                # For now, let's just append a fresh SystemMessage with the artifact context.
+                messages.append(SystemMessage(content=artifact_context))
 
         response = self.llm_with_tools.invoke(messages)
         return {"messages": [response]}
@@ -310,6 +401,10 @@ class FDAAgent:
     def _should_continue(self, state: AgentState) -> str:
         last_message = state["messages"][-1]
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+            # Check if the agent chose the final response tool
+            for tool_call in last_message.tool_calls:
+                if tool_call.get("name") == "respond_to_user":
+                    return "end"
             return "continue"
         return "end"
 
@@ -573,6 +668,28 @@ class FDAAgent:
         except Exception:
             pass
         return None
+
+    def get_artifacts(self, session_id: str) -> list[DataArtifact]:
+        """
+        Retrieve the list of data artifacts for a session.
+
+        Args:
+            session_id: The session ID to retrieve artifacts for
+
+        Returns:
+            List of DataArtifact objects
+        """
+        if not self._checkpointer:
+            return []
+
+        try:
+            config = {"configurable": {"thread_id": session_id}}
+            state = self.graph.get_state(config)
+            if state and state.values:
+                return state.values.get("artifacts", [])
+        except Exception:
+            pass
+        return []
 
     def clear_session(self, session_id: str) -> bool:
         """
