@@ -61,6 +61,11 @@ export default function EnhancedAgentProgress({
       `${baseUrl}/agents/analyze/stream/${encodeURIComponent(query)}`
     );
     eventSourceRef.current = eventSource;
+    
+    // Track timeouts for cleanup
+    const timeouts: NodeJS.Timeout[] = [];
+    // Track completion to prevent error handling after success
+    let isCompleted = false;
 
     eventSource.onopen = () => {
       console.log('Connected to agent stream');
@@ -91,9 +96,10 @@ export default function EnhancedAgentProgress({
                   setDataFlow(prev => [...prev, { from: fromAgent, to: toAgent, id: flowId }]);
                   
                   // Remove flow animation after 2 seconds
-                  setTimeout(() => {
+                  const timeoutId = setTimeout(() => {
                     setDataFlow(prev => prev.filter(f => f.id !== flowId));
                   }, 2000);
+                  timeouts.push(timeoutId);
                 }
               });
             }
@@ -105,15 +111,18 @@ export default function EnhancedAgentProgress({
             break;
             
           case 'complete':
+            isCompleted = true;
+            eventSource.close();
             if (onComplete) {
               onComplete(data.data);
             }
             break;
             
           case 'error':
-            if (onError) {
+            if (!isCompleted && onError) {
               onError(data.data.message);
             }
+            eventSource.close();
             break;
         }
       } catch (error) {
@@ -122,14 +131,19 @@ export default function EnhancedAgentProgress({
     };
 
     eventSource.onerror = (error) => {
-      console.error('SSE error:', error);
-      if (onError) {
-        onError('Connection to agent system lost');
+      // Only report error if we haven't completed successfully
+      // (Browsers sometimes report error on stream end)
+      if (!isCompleted) {
+        console.error('SSE error:', error);
+        if (onError) {
+          onError('Connection to agent system lost');
+        }
       }
       eventSource.close();
     };
 
     return () => {
+      timeouts.forEach(clearTimeout);
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;

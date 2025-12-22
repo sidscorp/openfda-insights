@@ -1,8 +1,8 @@
 import { extendTheme, type ThemeConfig } from '@chakra-ui/react'
 
 const config: ThemeConfig = {
-  initialColorMode: 'light',
-  useSystemColorMode: false,
+  initialColorMode: 'dark',
+  useSystemColorMode: true,
 }
 
 const theme = extendTheme({
@@ -38,16 +38,18 @@ const theme = extendTheme({
     body: 'var(--font-jakarta), "Plus Jakarta Sans", system-ui, -apple-system, sans-serif',
   },
   styles: {
-    global: {
+    global: (props: any) => ({
       body: {
-        bg: 'linear-gradient(135deg, #f6f8ff 0%, #eef2ff 40%, #f7fafc 100%)',
-        color: '#0f172a',
+        bg: props.colorMode === 'dark' 
+          ? 'linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #334155 100%)'
+          : 'linear-gradient(135deg, #f6f8ff 0%, #eef2ff 40%, #f7fafc 100%)',
+        color: props.colorMode === 'dark' ? '#f1f5f9' : '#0f172a',
       },
       '::selection': {
         background: 'brand.200',
-        color: '#0f172a',
+        color: props.colorMode === 'dark' ? '#0f172a' : '#0f172a',
       },
-    },
+    }),
   },
   components: {
     Button: {
@@ -70,6 +72,12 @@ const theme = extendTheme({
           boxShadow: '0 15px 40px rgba(47, 76, 209, 0.28)',
           _hover: { bg: 'brand.500', transform: 'translateY(-1px)' },
           _active: { bg: 'brand.700' },
+          _dark: {
+            bg: 'brand.500',
+            boxShadow: '0 15px 40px rgba(95, 133, 255, 0.35)',
+            _hover: { bg: 'brand.400' },
+            _active: { bg: 'brand.600' },
+          },
         },
         outline: {
           borderColor: 'brand.200',
@@ -88,6 +96,11 @@ const theme = extendTheme({
         borderWidth: '1px',
         borderColor: 'blackAlpha.50',
         shadow: 'md',
+        _dark: {
+          bg: 'whiteAlpha.50',
+          borderColor: 'whiteAlpha.100',
+          shadow: 'dark-lg',
+        },
       },
     },
     Tag: {

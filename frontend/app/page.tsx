@@ -17,10 +17,11 @@ import {
   Text,
   Textarea,
   Tooltip,
+  useColorMode,
   useToast,
   VStack,
 } from '@chakra-ui/react'
-import { CloseIcon } from '@chakra-ui/icons'
+import { CloseIcon, MoonIcon, SunIcon } from '@chakra-ui/icons'
 import { apiClient, type AgentStreamEvent } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -60,6 +61,7 @@ const starterPrompts = [
 ]
 
 export default function Home() {
+  const { colorMode, toggleColorMode } = useColorMode()
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -70,6 +72,7 @@ export default function Home() {
     },
   ])
   const [isStreaming, setIsStreaming] = useState(false)
+  const [streamCompleted, setStreamCompleted] = useState(false)
   const [streamStatus, setStreamStatus] = useState<{ phase: StreamPhase; message: string } | null>(null)
   const [streamSeconds, setStreamSeconds] = useState(0)
   const [streamSteps, setStreamSteps] = useState<StreamStep[]>([])
@@ -119,6 +122,7 @@ export default function Home() {
     setMessages((prev) => [...prev, userMessage, assistantMessage])
     setInput('')
     setIsStreaming(true)
+    setStreamCompleted(false)
     setStreamStatus({ phase: 'thinking', message: 'Waiting for the model to respond...' })
     setStreamSteps([
       { id: 'queue', label: 'Queueing request', status: 'done' },
@@ -238,12 +242,22 @@ export default function Home() {
 
         if (event.type === 'complete' || event.type === 'error') {
           setIsStreaming(false)
-          es.close()
-          eventSourceRef.current = null
+          setStreamCompleted(true)
           setActiveUserMessageId(null)
+          setTimeout(() => {
+            if (eventSourceRef.current) {
+              eventSourceRef.current.close()
+              eventSourceRef.current = null
+            }
+          }, 500)
         }
       },
       onError: (err) => {
+        // Don't show error popup if the stream completed successfully
+        if (streamCompleted) {
+          return
+        }
+        
         setIsStreaming(false)
         setStreamStatus({ phase: 'error', message: err || 'Connection lost' })
         setActiveUserMessageId(null)
@@ -269,6 +283,7 @@ export default function Home() {
       eventSourceRef.current = null
     }
     setIsStreaming(false)
+    setStreamCompleted(true) // Mark as completed to prevent error popup
     setStreamStatus(null)
     setStreamSteps([])
     setShowThinking(false)
@@ -295,9 +310,18 @@ export default function Home() {
                 <Heading size="lg">FDA Explorer</Heading>
                 <Text color="gray.600">Ask questions about device events, recalls, and approvals.</Text>
               </Box>
-              <Tag colorScheme={isStreaming ? 'green' : 'gray'} variant="subtle">
-                API: {guidance.api}
-              </Tag>
+              <HStack spacing={3}>
+                <Tag colorScheme={isStreaming ? 'green' : 'gray'} variant="subtle">
+                  API: {guidance.api}
+                </Tag>
+                <IconButton
+                  aria-label="Toggle color mode"
+                  icon={colorMode === 'light' ? <MoonIcon /> : <SunIcon />}
+                  onClick={toggleColorMode}
+                  variant="ghost"
+                  size="sm"
+                />
+              </HStack>
             </Stack>
           </CardBody>
         </Card>
@@ -566,7 +590,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             </Tag>
           )}
           <Tag size="sm" variant="subtle">
-            Cost: {message.meta.cost !== undefined ? `$${message.meta.cost.toFixed(4)}` : 'n/a'}
+            Cost: {message.meta.cost != null ? `$${message.meta.cost.toFixed(4)}` : 'n/a'}
           </Tag>
         </HStack>
       )}
