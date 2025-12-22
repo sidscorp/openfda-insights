@@ -37,9 +37,10 @@ export interface MultiAgentResult {
 export type AgentStreamEvent =
   | { type: 'start'; question: string }
   | { type: 'thinking'; content: string }
+  | { type: 'delta'; content: string }
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_result'; content: string }
-  | { type: 'complete'; answer: string; model?: string; tokens?: number; structured_data?: any }
+  | { type: 'complete'; answer: string; model?: string; tokens?: number; input_tokens?: number; output_tokens?: number; cost?: number; structured_data?: any }
   | { type: 'error'; message: string }
 
 export interface SearchRequest {
