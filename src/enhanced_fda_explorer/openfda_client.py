@@ -77,7 +77,7 @@ class OpenFDAClient:
 
             data, elapsed_ms = self._request_sync(path, params=page_params, sort=sort)
             meta = meta or data.get("meta", {})
-            results = data.get("results", [])
+            results = data.get("results", []) or []
             collected.extend(results)
 
             logger.debug(
@@ -131,7 +131,10 @@ class OpenFDAClient:
 
             data, elapsed_ms = await self._request_async(path, params=page_params, sort=sort)
             meta = meta or data.get("meta", {})
-            results = data.get("results", [])
+            results = data.get("results", []) or []
+            if results is None:
+                logger.error(f"Results is None from API response: {data}")
+                results = []
             collected.extend(results)
 
             logger.debug(

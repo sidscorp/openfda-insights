@@ -119,11 +119,14 @@ class ContextAwareToolNode:
         return {
             "messages": tool_messages,
             "resolver_context": new_context if new_context else None,
-            "artifacts": new_artifacts if new_artifacts else None
+            "artifacts": new_artifacts or []
         }
 
     async def ainvoke(self, state: AgentState) -> dict:
         """Async version that runs tool _arun methods concurrently."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"DEBUG ainvoke state: {type(state)}, messages type: {type(state.get('messages'))}")
         messages = state["messages"]
         last_message = messages[-1]
 
@@ -171,7 +174,7 @@ class ContextAwareToolNode:
         return {
             "messages": list(tool_messages),
             "resolver_context": new_context if new_context else None,
-            "artifacts": new_artifacts if new_artifacts else None
+            "artifacts": new_artifacts or []
         }
 
     def _extract_context_and_artifacts(self, tool_calls: list) -> tuple[Optional[ResolverContext], list[DataArtifact]]:
@@ -375,7 +378,10 @@ class FDAAgent:
         return workflow.compile(checkpointer=self._checkpointer)
 
     def _call_model(self, state: AgentState) -> dict:
-        messages = list(state["messages"])
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"DEBUG _call_model state: {type(state)}, messages type: {type(state.get('messages'))}, messages value: {state.get('messages')}")
+        messages = list(state.get("messages") or [])
 
         has_system = any(isinstance(m, SystemMessage) for m in messages)
         if not has_system:
@@ -406,7 +412,7 @@ class FDAAgent:
             "- Output only the vetted answer; do not add commentary about the audit process."
         )
 
-        guard_messages = [SystemMessage(content=review_prompt)] + list(state["messages"])
+        guard_messages = [SystemMessage(content=review_prompt)] + list(state.get("messages") or [])
         review = self.guard_llm.invoke(guard_messages)
         # Fallback: if guard returns empty/whitespace, keep the original final answer.
         content = getattr(review, "content", "")
@@ -615,7 +621,7 @@ class FDAAgent:
         Returns:
             AgentResponse with content, token counts, and cost
         """
-        messages = list(history) + [HumanMessage(content=question)]
+        messages = list(history or []) + [HumanMessage(content=question)]
         input_state = {
             "messages": messages,
             "resolver_context": {},

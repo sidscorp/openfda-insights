@@ -11,6 +11,7 @@ echo -e "${BLUE}Deploying FDA Multi-Agent Intelligence System...${NC}"
 # Build the Next.js frontend
 echo -e "${GREEN}Building Next.js frontend...${NC}"
 cd frontend
+rm -rf out
 npm install
 npm run build
 
@@ -20,9 +21,13 @@ if [ $? -ne 0 ]; then
 fi
 
 # Create deployment directory
-DEPLOY_DIR="/var/www/portfolio.snambiar.com/fda"
+DEPLOY_DIR="/var/www/openfda-agent.snambiar.com"
 echo -e "${GREEN}Creating deployment directory at $DEPLOY_DIR...${NC}"
 sudo mkdir -p $DEPLOY_DIR
+
+# Clean existing files to prevent stale directory conflicts
+echo -e "${GREEN}Cleaning deployment directory...${NC}"
+sudo rm -rf $DEPLOY_DIR/*
 
 # Copy built files
 echo -e "${GREEN}Copying built files...${NC}"
@@ -41,10 +46,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
-WorkingDirectory=/root/portfolio/analytics-projects/openfda-insights
+User=root
+WorkingDirectory=/root/projects/analytics-projects/openfda-insights
+EnvironmentFile=/root/projects/analytics-projects/openfda-insights/.env
 Environment="PATH=/usr/bin:/usr/local/bin"
-Environment="PYTHONPATH=/root/portfolio/analytics-projects/openfda-insights"
+Environment="PYTHONPATH=/root/projects/analytics-projects/openfda-insights"
 ExecStart=/usr/bin/python3 -m src.enhanced_fda_explorer serve --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=10
@@ -72,16 +78,75 @@ else
     exit 1
 fi
 
-# Update nginx configuration
-echo -e "${GREEN}Updating nginx configuration...${NC}"
-NGINX_CONF="/etc/nginx/sites-available/portfolio.snambiar.com"
+# Create nginx configuration for openfda-agent.snambiar.com
+echo -e "${GREEN}Creating nginx configuration...${NC}"
+NGINX_CONF="/etc/nginx/sites-available/openfda-agent.snambiar.com"
 
-# Check if FDA location blocks already exist
-if ! grep -q "location /fda" "$NGINX_CONF"; then
-    echo -e "${BLUE}Adding FDA location blocks to nginx config...${NC}"
-    # Insert the FDA configuration before the closing brace
-    sudo sed -i '/^}$/i \    # FDA Multi-Agent Explorer\n    location /fda {\n        alias /var/www/portfolio.snambiar.com/fda;\n        try_files $uri $uri/ /fda/index.html;\n        \n        # Security headers\n        add_header X-Frame-Options "SAMEORIGIN" always;\n        add_header X-Content-Type-Options "nosniff" always;\n        add_header X-XSS-Protection "1; mode=block" always;\n        \n        # Cache static assets\n        location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {\n            expires 30d;\n            add_header Cache-Control "public, immutable";\n        }\n    }\n    \n    location /fda/api {\n        proxy_pass http://127.0.0.1:8001/api;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection '"'"'upgrade'"'"';\n        proxy_set_header Host $host;\n        proxy_cache_bypass $http_upgrade;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        \n        # Timeouts for long-running AI requests\n        proxy_connect_timeout 60s;\n        proxy_send_timeout 60s;\n        proxy_read_timeout 60s;\n        \n        # SSE/WebSocket support for agent streaming\n        proxy_buffering off;\n        proxy_cache off;\n        chunked_transfer_encoding off;\n    }' "$NGINX_CONF"
-fi
+sudo tee "$NGINX_CONF" > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name openfda-agent.snambiar.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name openfda-agent.snambiar.com;
+    
+    ssl_certificate /etc/letsencrypt/live/openfda-agent.snambiar.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/openfda-agent.snambiar.com/privkey.pem;
+    
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    
+    root /var/www/openfda-agent.snambiar.com;
+    index index.html;
+    
+    # Frontend static files
+    location / {
+        try_files $uri $uri/ /index.html;
+        
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        
+        # Cache static assets
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 30d;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    
+    # API proxy to backend
+    location /api {
+        proxy_pass http://127.0.0.1:8001/api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts for long-running AI requests
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # SSE/WebSocket support for agent streaming
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+    }
+}
+EOF
+
+# Enable the site
+sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
 
 # Test nginx configuration
 echo -e "${GREEN}Testing nginx configuration...${NC}"
@@ -93,8 +158,8 @@ if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ Deployment complete!${NC}"
     echo ""
     echo -e "${BLUE}FDA Multi-Agent Intelligence System is now available at:${NC}"
-    echo -e "${GREEN}https://portfolio.snambiar.com/fda${NC}"
-    echo -e "${GREEN}Multi-Agent Dashboard: https://portfolio.snambiar.com/fda/agents${NC}"
+    echo -e "${GREEN}https://openfda-agent.snambiar.com${NC}"
+    echo -e "${GREEN}Multi-Agent Dashboard: https://openfda-agent.snambiar.com/agents${NC}"
     echo ""
     echo -e "${BLUE}API Status:${NC}"
     curl -s http://127.0.0.1:8001/api/health | jq '.'

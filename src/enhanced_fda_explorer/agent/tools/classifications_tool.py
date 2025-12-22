@@ -63,7 +63,7 @@ class SearchClassificationsTool(BaseTool):
             return f"Error searching classifications: {str(e)}"
 
     def _format_results(self, query: str, data: dict) -> str:
-        results = data.get("results", [])
+        results = data.get("results", []) or []
         total = data.get("meta", {}).get("results", {}).get("total", 0)
 
         if not results:

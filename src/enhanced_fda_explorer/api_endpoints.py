@@ -467,6 +467,22 @@ async def agent_stream(
     async def generate_events():
         try:
             agent = FDAAgent(provider=provider, model=model)
+            accumulated_answer = ""
+            # Track stats incrementally
+            total_input_tokens = 0
+            total_output_tokens = 0
+            total_cost = 0.0
+            used_model = model or provider
+            
+            # Cost estimation per 1M tokens (rough estimates)
+            cost_estimates = {
+                "openrouter": {"input": 2.0, "output": 6.0},  # Average for popular models
+                "openai": {"input": 5.0, "output": 15.0},     # GPT-4 pricing
+                "anthropic": {"input": 15.0, "output": 75.0}, # Claude pricing
+                "cohere": {"input": 1.0, "output": 2.0},      # Command pricing
+                "gemini": {"input": 0.125, "output": 0.375},  # Gemini 1.5 Flash
+                "xiaomi": {"input": 0.0, "output": 0.0},      # Free tier
+            }
 
             yield f"data: {json.dumps({'type': 'start', 'question': question})}\n\n"
 
@@ -475,6 +491,22 @@ async def agent_stream(
                 messages = event.get(node_name, {}).get("messages", [])
 
                 for msg in messages:
+                    # Extract usage/model info from AIMessages (completed steps)
+                    if isinstance(msg, AIMessage):
+                        if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
+                            total_input_tokens += msg.usage_metadata.get("input_tokens", 0)
+                            total_output_tokens += msg.usage_metadata.get("output_tokens", 0)
+                        
+                        if hasattr(msg, 'response_metadata') and msg.response_metadata:
+                            meta = msg.response_metadata
+                            if meta.get("model_name"):
+                                used_model = meta["model_name"]
+                            
+                            # Try to extract cost if available (provider dependent)
+                            token_usage = meta.get("token_usage", {})
+                            if token_usage.get("cost"):
+                                total_cost += token_usage["cost"]
+
                     if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
                         for tool_call in msg.tool_calls:
                             yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_call['name'], 'args': tool_call['args']})}\n\n"
@@ -487,23 +519,44 @@ async def agent_stream(
 
                     if isinstance(msg, (AIMessage, AIMessageChunk)) and msg.content:
                         if node_name != "tools":
+                            accumulated_answer += msg.content
                             yield f"data: {json.dumps({'type': 'delta', 'content': msg.content})}\n\n"
 
-            final_result = agent.ask(question, session_id=session_id)
+            # Calculate cost if not provided
+            if total_cost <= 0 and total_input_tokens > 0:
+                # Try to estimate cost based on provider
+                provider_key = provider.lower()
+                if provider_key == "openrouter":
+                    # Try to get more specific model pricing
+                    if "flash" in (model or "").lower():
+                        provider_key = "gemini"
+                    elif "command" in (model or "").lower():
+                        provider_key = "cohere"
+                
+                if provider_key in cost_estimates:
+                    rates = cost_estimates[provider_key]
+                    total_cost = (
+                        (total_input_tokens / 1_000_000) * rates["input"] +
+                        (total_output_tokens / 1_000_000) * rates["output"]
+                    )
+            
+            # Use accumulated stats
             complete_payload = {
                 "type": "complete",
-                "answer": final_result.content,
-                "model": final_result.model,
-                "tokens": final_result.total_tokens,
-                "input_tokens": final_result.input_tokens,
-                "output_tokens": final_result.output_tokens,
-                "cost": final_result.cost,
-                "structured_data": final_result.structured.model_dump() if final_result.structured else None,
+                "answer": accumulated_answer,
+                "model": used_model,
+                "tokens": total_input_tokens + total_output_tokens,
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "cost": total_cost if total_cost > 0 else None,
+                "structured_data": None,
             }
             yield f"data: {json.dumps(complete_payload)}\n\n"
 
         except Exception as e:
+            import traceback
             logger.error(f"Stream error: {e}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(

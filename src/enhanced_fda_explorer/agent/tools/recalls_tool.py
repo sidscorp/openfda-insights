@@ -73,7 +73,7 @@ class SearchRecallsTool(BaseTool):
             return f"Error searching recalls: {str(e)}"
 
     def _to_structured(self, query: str, date_from: str, date_to: str, data: dict) -> RecallSearchResult:
-        results = data.get("results", [])
+        results = data.get("results", []) or []
         total = data.get("meta", {}).get("results", {}).get("total", 0)
 
         records = []
@@ -81,7 +81,7 @@ class SearchRecallsTool(BaseTool):
         status_counts = Counter()
         firm_counts = Counter()
 
-        for r in results:
+        for r in (results or []):
             recall_class = r.get("classification", "Unknown")
             class_counts[recall_class] += 1
             status_counts[r.get("status", "Unknown")] += 1
@@ -112,7 +112,7 @@ class SearchRecallsTool(BaseTool):
         )
 
     def _format_results(self, query: str, data: dict) -> str:
-        results = data.get("results", [])
+        results = data.get("results", []) or []
         total = data.get("meta", {}).get("results", {}).get("total", 0)
 
         if not results:
@@ -124,7 +124,7 @@ class SearchRecallsTool(BaseTool):
         status_counts = Counter()
         firms = Counter()
 
-        for recall in results:
+        for recall in (results or []):
             recall_class = recall.get("classification", "Unknown")
             class_counts[recall_class] += 1
 
@@ -155,7 +155,7 @@ class SearchRecallsTool(BaseTool):
                 lines.append(f"  {firm}: {count}")
 
         lines.append("\nRECENT RECALLS:")
-        for i, recall in enumerate(results[:5], 1):
+        for i, recall in enumerate((results or [])[:5], 1):
             date_raw = recall.get("recall_initiation_date", "")
             date = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:8]}" if len(date_raw) == 8 else date_raw or "Unknown"
             firm = recall.get("recalling_firm", "Unknown")
