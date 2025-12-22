@@ -3,6 +3,7 @@ FDA Intelligence Agent - LangGraph-based agent for FDA data exploration.
 """
 from dataclasses import dataclass, field
 from typing import TypedDict, Annotated, Sequence, Optional, Any
+import os
 import operator
 import json
 import uuid
@@ -295,6 +296,19 @@ class FDAAgent:
         config = get_config()
 
         self.provider = provider
+        if model is None:
+            env_model = os.getenv("AI_MODEL")
+            if env_model:
+                model = env_model
+            elif getattr(config.ai, "model", None):
+                model = config.ai.model
+        if "max_tokens" not in kwargs and getattr(config.ai, "max_tokens", None):
+            kwargs["max_tokens"] = config.ai.max_tokens
+        if "timeout" not in kwargs and getattr(config.ai, "timeout", None):
+            kwargs["timeout"] = config.ai.timeout
+        if "streaming" not in kwargs and provider == "openrouter":
+            kwargs["streaming"] = True
+
         self.llm = LLMFactory.create(
             provider=provider,
             model=model,

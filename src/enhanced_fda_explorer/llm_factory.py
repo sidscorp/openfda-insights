@@ -50,8 +50,14 @@ class LLMFactory:
     def _create_openrouter(cls, model: str, temperature: float, **kwargs) -> BaseChatModel:
         """Create OpenRouter LLM via OpenAI-compatible API."""
         from langchain_openai import ChatOpenAI
+        from .config import get_config
 
-        api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("AI_API_KEY")
+        config = get_config(validate_startup=False)
+        api_key = (
+            os.getenv("OPENROUTER_API_KEY")
+            or os.getenv("AI_API_KEY")
+            or config.ai.api_key
+        )
         if not api_key:
             raise ValueError("OPENROUTER_API_KEY or AI_API_KEY environment variable required")
 
@@ -60,6 +66,8 @@ class LLMFactory:
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
             temperature=temperature,
+            max_tokens=kwargs.get("max_tokens"),
+            timeout=kwargs.get("timeout"),
         )
 
     @classmethod
