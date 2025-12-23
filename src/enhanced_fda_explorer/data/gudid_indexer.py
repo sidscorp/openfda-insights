@@ -631,7 +631,7 @@ class GUDIDIndexer:
                 'is_combination_product', 'is_kit', 'is_single_use', 'is_sterile',
                 'is_rx', 'is_otc', 'indexed_at'
             ])
-            self.conn.execute("INSERT INTO devices SELECT * FROM df_devices")
+            self.conn.execute("INSERT OR REPLACE INTO devices SELECT * FROM df_devices")
 
         if all_identifiers:
             logger.info("Inserting device identifiers...")
@@ -668,6 +668,105 @@ class GUDIDIndexer:
         logger.info(f"Indexing complete. Total records: {self.total_records}")
 
         # Print statistics
+        device_count = self.conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+        gmdn_count = self.conn.execute("SELECT COUNT(DISTINCT gmdn_code) FROM gmdn_terms").fetchone()[0]
+        product_code_count = self.conn.execute("SELECT COUNT(DISTINCT product_code) FROM product_codes").fetchone()[0]
+        company_count = self.conn.execute("SELECT COUNT(DISTINCT company_name) FROM devices WHERE company_name IS NOT NULL").fetchone()[0]
+
+        logger.info(f"Database statistics:")
+        logger.info(f"  - Total devices: {device_count}")
+        logger.info(f"  - Unique GMDN codes: {gmdn_count}")
+        logger.info(f"  - Unique product codes: {product_code_count}")
+        logger.info(f"  - Unique companies: {company_count}")
+
+    def index_directory_batched(self, directory: str, batch_size: int = 40):
+        """Memory-optimized indexing: processes files in batches to avoid OOM."""
+        if not self.conn:
+            self.connect()
+
+        self.create_tables(with_indexes=False)
+
+        xml_dir = Path(directory)
+        xml_files = sorted(xml_dir.glob("*.xml"))
+
+        logger.info(f"Found {len(xml_files)} XML files to index")
+        logger.info(f"Processing in batches of {batch_size} files")
+
+        total_devices = 0
+        id_counter = {'identifiers': 0, 'gmdn': 0, 'product_codes': 0}
+
+        for i in range(0, len(xml_files), batch_size):
+            batch = xml_files[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}/{(len(xml_files) + batch_size - 1)//batch_size} ({len(batch)} files)")
+
+            batch_devices = []
+            batch_identifiers = []
+            batch_gmdn = []
+            batch_product_codes = []
+
+            with ProcessPoolExecutor(max_workers=1) as executor:
+                futures = {executor.submit(_parse_xml_file, str(f)): f for f in batch}
+
+                for future in tqdm(as_completed(futures), total=len(batch), desc=f"Batch {i//batch_size + 1}"):
+                    try:
+                        devices, identifiers, gmdn_terms, product_codes = future.result()
+                        batch_devices.extend(devices)
+                        batch_identifiers.extend(identifiers)
+                        batch_gmdn.extend(gmdn_terms)
+                        batch_product_codes.extend(product_codes)
+                    except Exception as e:
+                        logger.debug(f"Error: {e}")
+
+            if batch_devices:
+                logger.info(f"Inserting {len(batch_devices)} devices from batch...")
+                df_devices = pd.DataFrame(batch_devices, columns=[
+                    'public_device_record_key', 'primary_di', 'brand_name', 'version_model_number',
+                    'catalog_number', 'device_description', 'company_name', 'duns_number',
+                    'device_count', 'device_status', 'device_publish_date',
+                    'is_combination_product', 'is_kit', 'is_single_use', 'is_sterile',
+                    'is_rx', 'is_otc', 'indexed_at'
+                ])
+                self.conn.execute("INSERT OR REPLACE INTO devices SELECT * FROM df_devices")
+                total_devices += len(batch_devices)
+                del df_devices
+
+            if batch_identifiers:
+                df_identifiers = pd.DataFrame(batch_identifiers, columns=[
+                    'device_key', 'device_id', 'device_id_type',
+                    'device_id_issuing_agency', 'pkg_quantity', 'pkg_type'
+                ])
+                df_identifiers.insert(0, 'id', range(id_counter['identifiers'] + 1, id_counter['identifiers'] + len(df_identifiers) + 1))
+                self.conn.execute("INSERT INTO device_identifiers SELECT * FROM df_identifiers")
+                id_counter['identifiers'] += len(df_identifiers)
+                del df_identifiers
+
+            if batch_gmdn:
+                df_gmdn = pd.DataFrame(batch_gmdn, columns=[
+                    'device_key', 'gmdn_code', 'gmdn_pt_name',
+                    'gmdn_pt_definition', 'implantable', 'gmdn_code_status'
+                ])
+                df_gmdn.insert(0, 'id', range(id_counter['gmdn'] + 1, id_counter['gmdn'] + len(df_gmdn) + 1))
+                self.conn.execute("INSERT INTO gmdn_terms SELECT * FROM df_gmdn")
+                id_counter['gmdn'] += len(df_gmdn)
+                del df_gmdn
+
+            if batch_product_codes:
+                df_product_codes = pd.DataFrame(batch_product_codes, columns=[
+                    'device_key', 'product_code', 'product_code_name'
+                ])
+                df_product_codes.insert(0, 'id', range(id_counter['product_codes'] + 1, id_counter['product_codes'] + len(df_product_codes) + 1))
+                self.conn.execute("INSERT INTO product_codes SELECT * FROM df_product_codes")
+                id_counter['product_codes'] += len(df_product_codes)
+                del df_product_codes
+
+            self.conn.commit()
+            logger.info(f"Batch complete. Total devices so far: {total_devices}")
+
+        self.total_records = total_devices
+        self._create_indexes()
+
+        logger.info(f"Indexing complete. Total records: {self.total_records}")
+
         device_count = self.conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
         gmdn_count = self.conn.execute("SELECT COUNT(DISTINCT gmdn_code) FROM gmdn_terms").fetchone()[0]
         product_code_count = self.conn.execute("SELECT COUNT(DISTINCT product_code) FROM product_codes").fetchone()[0]

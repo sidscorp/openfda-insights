@@ -3,15 +3,15 @@
 """
 from typing import Type, Optional
 from collections import Counter
-import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-import requests
-import httpx
+
+from ...openfda_client import OpenFDAClient
 
 
 class Search510kInput(BaseModel):
-    query: str = Field(description="Device name, applicant/company name, or K number")
+    query: str = Field(default="", description="Device name, applicant/company name, or K number")
+    product_codes: list[str] = Field(default_factory=list, description="FDA product codes to search for (e.g., ['FXX', 'MSH']). Use this for precise searches after resolving device names.")
     date_from: str = Field(default="", description="Start date in YYYYMMDD format")
     date_to: str = Field(default="", description="End date in YYYYMMDD format")
     limit: int = Field(default=100, description="Maximum number of results")
@@ -20,58 +20,72 @@ class Search510kInput(BaseModel):
 class Search510kTool(BaseTool):
     name: str = "search_510k"
     description: str = """Search FDA 510(k) premarket notifications (clearances).
+
+    Parameters:
+    - product_codes: List of FDA product codes (e.g., ['FXX', 'MSH']). ALWAYS use this when you have product codes from resolve_device.
+    - query: Device name, company name, or K number (fallback for text search)
+
+    IMPORTANT: If you called resolve_device and got product codes, pass them to product_codes parameter for precise results.
+
     510(k) clearances demonstrate substantial equivalence to a predicate device.
     Use this to find cleared devices, clearance dates, applicants, and predicate devices.
-    Can search by device name, company name, or K number (e.g., K201234)."""
+
+    Examples:
+    - BEST: After resolving "mask" -> FXX, MSH: search_510k(product_codes=["FXX", "MSH"])
+    - By K number: search_510k(query="K201234")
+    - By company: search_510k(query="Medtronic")"""
     args_schema: Type[BaseModel] = Search510kInput
 
+    _client: OpenFDAClient
     _api_key: Optional[str] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
+        self._client = OpenFDAClient(api_key=api_key)
 
-    def _run(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
-        try:
-            url = "https://api.fda.gov/device/510k.json"
+    def _build_search(self, query: str, product_codes: list[str], date_from: str, date_to: str) -> str:
+        search_parts = []
 
+        if product_codes:
+            code_queries = [f'product_code:"{code}"' for code in product_codes]
+            search_parts.append(f'({" OR ".join(code_queries)})')
+        elif query:
             if query.upper().startswith("K") and len(query) >= 6:
-                search_parts = [f'k_number:"{query.upper()}"']
+                search_parts.append(f'k_number:"{query.upper()}"')
             else:
-                search_parts = [f'(device_name:"{query}" OR applicant:"{query}")']
+                search_parts.append(f'(device_name:"{query}" OR applicant:"{query}")')
 
-            if date_from and date_to:
-                search_parts.append(f'decision_date:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'decision_date:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'decision_date:[* TO {date_to}]')
+        if date_from and date_to:
+            search_parts.append(f'decision_date:[{date_from} TO {date_to}]')
+        elif date_from:
+            search_parts.append(f'decision_date:[{date_from} TO *]')
+        elif date_to:
+            search_parts.append(f'decision_date:[* TO {date_to}]')
 
-            search = " AND ".join(search_parts)
+        if not search_parts:
+            raise ValueError("Must provide either product_codes or query parameter.")
 
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "decision_date:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
+        return " AND ".join(search_parts)
 
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-
+    def _run(self, query: str = "", product_codes: list[str] = None, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
+        try:
+            search = self._build_search(query, product_codes or [], date_from, date_to)
+            data = self._client.get(
+                "device/510k.json",
+                params={"search": search, "limit": min(limit, 100)},
+                sort="decision_date:desc"
+            )
             return self._format_results(query, data)
-
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                return f"No 510(k) clearances found for '{query}'."
-            return f"FDA API error: {str(e)}"
+        except ValueError as e:
+            return str(e)
         except Exception as e:
+            if "404" in str(e) or "No results" in str(e):
+                return f"No 510(k) clearances found for '{query}'."
             return f"Error searching 510(k) clearances: {str(e)}"
 
     def _format_results(self, query: str, data: dict) -> str:
-        results = data.get("results", [])
+        results = data.get("results", []) or []
         total = data.get("meta", {}).get("results", {}).get("total", 0)
 
         if not results:
@@ -81,7 +95,7 @@ class Search510kTool(BaseTool):
 
         applicants = Counter()
         decisions = Counter()
-        product_codes = Counter()
+        product_codes_counter = Counter()
 
         for clearance in results:
             applicant = clearance.get("applicant", "Unknown")
@@ -92,7 +106,7 @@ class Search510kTool(BaseTool):
 
             openfda = clearance.get("openfda", {})
             for code in openfda.get("device_name", []):
-                product_codes[code] += 1
+                product_codes_counter[code] += 1
 
         lines.append("DECISION OUTCOMES:")
         for decision, count in decisions.most_common():
@@ -118,46 +132,18 @@ class Search510kTool(BaseTool):
 
         return "\n".join(lines)
 
-    async def _arun(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
-        """Async version using httpx for non-blocking HTTP calls."""
-        start_time = time.time()
+    async def _arun(self, query: str = "", product_codes: list[str] = None, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
         try:
-            url = "https://api.fda.gov/device/510k.json"
-
-            if query.upper().startswith("K") and len(query) >= 6:
-                search_parts = [f'k_number:"{query.upper()}"']
-            else:
-                search_parts = [f'(device_name:"{query}" OR applicant:"{query}")']
-
-            if date_from and date_to:
-                search_parts.append(f'decision_date:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'decision_date:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'decision_date:[* TO {date_to}]')
-
-            search = " AND ".join(search_parts)
-
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "decision_date:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-
-            elapsed_ms = (time.time() - start_time) * 1000
-            result = self._format_results(query, data)
-            return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return f"No 510(k) clearances found for '{query}'."
-            return f"FDA API error: {str(e)}"
+            search = self._build_search(query, product_codes or [], date_from, date_to)
+            data = await self._client.aget(
+                "device/510k.json",
+                params={"search": search, "limit": min(limit, 100)},
+                sort="decision_date:desc"
+            )
+            return self._format_results(query, data)
+        except ValueError as e:
+            return str(e)
         except Exception as e:
+            if "404" in str(e) or "No results" in str(e):
+                return f"No 510(k) clearances found for '{query}'."
             return f"Error searching 510(k) clearances: {str(e)}"

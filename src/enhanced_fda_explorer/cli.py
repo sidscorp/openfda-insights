@@ -119,11 +119,24 @@ def ask(ctx, question, provider, model, verbose, raw, as_json, session_id):
         fda ask "Has 3M had any device recalls in the past year?"
         fda ask --provider bedrock "What is the regulatory classification for N95 respirators?"
     """
-    from .agent import FDAAgent
+    from .agent import FDAAgent, QueryRouter
     from langchain_core.messages import AIMessage, ToolMessage
 
     try:
-        agent = FDAAgent(provider=provider, model=model)
+        # Stage 1: Route query to determine required tools
+        router = QueryRouter()
+        with console.status("[bold blue]Routing query...[/bold blue]"):
+            allowed_tools = router.route(question)
+        
+        if verbose:
+            console.print(f"[dim]Router selected: {', '.join(allowed_tools)}[/dim]")
+
+        # Stage 2: Execute with filtered tools
+        agent = FDAAgent(
+            provider=provider, 
+            model=model,
+            allowed_tools=allowed_tools
+        )
 
         if as_json:
             stderr_console = Console(stderr=True)
@@ -332,7 +345,8 @@ def chat(ctx, provider, model, session_id):
     console.print(f"[dim]Provider: {provider} | Model: {model or 'default'} | Session: {sid}[/dim]\n")
     console.print("[cyan]Type your question. Enter /exit or Ctrl+C to quit.[/cyan]\n")
 
-    agent = FDAAgent(provider=provider, model=model)
+    from .agent import QueryRouter
+    router = QueryRouter()
 
     try:
         while True:
@@ -347,6 +361,14 @@ def chat(ctx, provider, model, session_id):
             if user_input.lower() in {"/exit", "exit", "quit", "/quit"}:
                 console.print("[dim]Ending chat.[/dim]")
                 break
+
+            # Re-initialize agent with new allowed_tools for this turn
+            # (LangGraph handles state persistence via sid in stream/ask)
+            agent = FDAAgent(
+                provider=provider, 
+                model=model,
+                allowed_tools=allowed_tools
+            )
 
             final_response = None
             all_ai_messages = []

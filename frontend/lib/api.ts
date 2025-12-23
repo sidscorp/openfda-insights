@@ -36,10 +36,12 @@ export interface MultiAgentResult {
 
 export type AgentStreamEvent =
   | { type: 'start'; question: string }
+  | { type: 'clear' }
   | { type: 'thinking'; content: string }
+  | { type: 'delta'; content: string }
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_result'; content: string }
-  | { type: 'complete'; answer: string; model?: string; tokens?: number; structured_data?: any }
+  | { type: 'complete'; answer: string; model?: string; tokens?: number; input_tokens?: number; output_tokens?: number; cost?: number; structured_data?: any }
   | { type: 'error'; message: string }
 
 export interface SearchRequest {
@@ -280,9 +282,14 @@ class APIClient {
     handlers: {
       onEvent?: (event: AgentStreamEvent) => void
       onError?: (err: string) => void
-    }
+    },
+    sessionId?: string
   ): EventSource {
-    const es = new EventSource(`${this.baseUrl}/agent/stream/${encodeURIComponent(question)}`)
+    let url = `${this.baseUrl}/agent/stream/${encodeURIComponent(question)}`
+    if (sessionId) {
+      url += `?session_id=${encodeURIComponent(sessionId)}`
+    }
+    const es = new EventSource(url)
 
     es.onmessage = (event) => {
       try {

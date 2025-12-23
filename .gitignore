@@ -83,3 +83,7 @@ data/*.csv
 *.pem
 *.key
 credentials.json
+
+# Local workflow files
+tasks.yaml
+scripts/manage_tasks.py

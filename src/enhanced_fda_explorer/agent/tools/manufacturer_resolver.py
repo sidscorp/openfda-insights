@@ -2,6 +2,7 @@
 Manufacturer Resolver Tool - Resolve company names to exact FDA firm names.
 """
 from typing import Type, Optional
+import asyncio
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -98,4 +99,4 @@ class ManufacturerResolverTool(BaseTool):
             return f"Error resolving manufacturer: {str(e)}"
 
     async def _arun(self, query: str, limit: int = 100) -> str:
-        return self._run(query, limit)
+        return await asyncio.to_thread(self._run, query, limit)

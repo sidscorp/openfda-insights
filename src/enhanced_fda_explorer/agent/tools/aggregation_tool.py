@@ -144,6 +144,9 @@ Best for questions like "mask manufacturers by country" or "per product code cou
             "device/registrationlisting.json",
             params={"search": search, "limit": max(1, min(limit, 100))},
         )
+        return self._parse_establishments(data, limit)
+
+    def _parse_establishments(self, data: dict, limit: int) -> list[dict]:
         results = data.get("results", [])
         establishments: list[dict] = []
         seen = set()
@@ -164,3 +167,96 @@ Best for questions like "mask manufacturers by country" or "per product code cou
             if len(establishments) >= limit:
                 break
         return establishments
+
+    async def _count_async(self, field: str, search: str) -> list[dict]:
+        data = await self._client.aget(
+            "device/registrationlisting.json",
+            params={"search": search, "count": field},
+        )
+        return data.get("results", [])
+
+    async def _fetch_establishments_async(self, search: str, limit: int) -> list[dict]:
+        data = await self._client.aget(
+            "device/registrationlisting.json",
+            params={"search": search, "limit": max(1, min(limit, 100))},
+        )
+        return self._parse_establishments(data, limit)
+
+    async def _arun(
+        self,
+        query: Optional[str] = None,
+        product_codes: Optional[list[str]] = None,
+        max_countries: int = 20,
+        include_establishments: bool = False,
+        max_establishments: int = 25,
+    ) -> str:
+        self._last_structured_result = None
+
+        if not query and not product_codes:
+            return "Provide a query (e.g., 'mask') or product_codes to aggregate."
+
+        search_base = ""
+        if query:
+            search_base = f"(proprietary_name:{query} OR products.openfda.device_name:{query})"
+
+        lines: list[str] = []
+        structured_data = {
+            "query": query,
+            "product_codes": product_codes,
+            "aggregations": []
+        }
+
+        if search_base:
+            country_counts = await self._count_async("registration.iso_country_code", search_base)
+            structured_data["aggregations"].append({
+                "type": "query_country_counts",
+                "filter": query,
+                "counts": country_counts
+            })
+            lines.append(f"Country counts for '{query}' registrations:")
+            if country_counts:
+                for c in country_counts[:max_countries]:
+                    lines.append(f"  {c['term']}: {c['count']}")
+            else:
+                lines.append("  No countries found for this query.")
+            lines.append("")
+
+        if product_codes:
+            for code in product_codes:
+                search = search_base
+                if search:
+                    search = f"{search} AND products.product_code:{code}"
+                else:
+                    search = f"products.product_code:{code}"
+
+                country_counts = await self._count_async("registration.iso_country_code", search)
+                structured_data["aggregations"].append({
+                    "type": "product_code_country_counts",
+                    "filter": code,
+                    "counts": country_counts
+                })
+                lines.append(f"Country counts for product code {code}:")
+                if country_counts:
+                    for c in country_counts[:max_countries]:
+                        lines.append(f"  {c['term']}: {c['count']}")
+                else:
+                    lines.append("  No countries found for this product code.")
+                lines.append("")
+
+        if include_establishments and search_base:
+            lines.append(f"Sample establishments for '{query}' (first {max_establishments} results):")
+            establishments = await self._fetch_establishments_async(search_base, max_establishments)
+            structured_data["establishments"] = establishments
+            if establishments:
+                for est in establishments:
+                    loc = ", ".join(part for part in [est.get("city"), est.get("state"), est.get("country")] if part)
+                    loc = loc or "Location unknown"
+                    lines.append(f"  • {est.get('name','Unknown')} - {loc}")
+            else:
+                lines.append("  No establishments found in sample.")
+
+        if not lines:
+            return "No aggregation results."
+
+        self._last_structured_result = structured_data
+        return "\n".join(lines).rstrip()
