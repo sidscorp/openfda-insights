@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Alert,
+  AlertIcon,
   Box,
   Button,
   Card,
@@ -22,7 +24,7 @@ import {
   useToast,
   VStack,
 } from '@chakra-ui/react'
-import { CloseIcon, MoonIcon, SunIcon } from '@chakra-ui/icons'
+import { AddIcon, CloseIcon, MoonIcon, SunIcon } from '@chakra-ui/icons'
 import { apiClient, type AgentStreamEvent } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -63,6 +65,9 @@ const starterPrompts = [
   'Compare MAUDE signals for endoscopy towers vs laparoscopic cameras',
 ]
 
+const TOKEN_WARNING_THRESHOLD = 50000
+const TOKEN_LIMIT = 100000
+
 export default function Home() {
   const { colorMode, toggleColorMode } = useColorMode()
   const subtitleColor = useColorModeValue('gray.600', 'gray.200')
@@ -85,6 +90,8 @@ export default function Home() {
   const [toolCallsTotal, setToolCallsTotal] = useState(0)
   const [toolCallsDone, setToolCallsDone] = useState(0)
   const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null)
+  const [sessionId] = useState(() => crypto.randomUUID())
+  const [sessionTokens, setSessionTokens] = useState(0)
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasDeltaRef = useRef(false)
   const streamCompletedRef = useRef(false)
@@ -107,7 +114,11 @@ export default function Home() {
     return () => window.clearInterval(interval)
   }, [isStreaming])
 
-  const canSend = input.trim().length > 0 && !isStreaming
+  const canSend = input.trim().length > 0 && !isStreaming && sessionTokens <= TOKEN_LIMIT
+
+  const handleNewChat = () => {
+    window.location.reload()
+  }
 
   const handleSend = (prompt?: string) => {
     const text = prompt ?? input.trim()
@@ -149,7 +160,12 @@ export default function Home() {
               m.id === assistantMessage.id ? { ...m, content: '' } : m
             )
           )
-        } else if (event.type === 'thinking') {
+        } else if (event.type === 'complete') {
+          const newTokens = (event.input_tokens || 0) + (event.output_tokens || 0)
+          setSessionTokens((prev) => prev + newTokens)
+        }
+
+        if (event.type === 'thinking') {
           setStreamStatus({ phase: 'thinking', message: event.content })
           setStreamSteps((prev) =>
             prev.map((step) =>
@@ -287,7 +303,7 @@ export default function Home() {
           isClosable: true,
         })
       },
-    })
+    }, sessionId)
 
     eventSourceRef.current = es
   }
@@ -329,6 +345,20 @@ export default function Home() {
                 <Tag colorScheme={isStreaming ? 'green' : 'gray'} variant="subtle">
                   API: {guidance.api}
                 </Tag>
+                {sessionTokens > 0 && (
+                  <Tag size="sm" variant="subtle" colorScheme={sessionTokens > TOKEN_WARNING_THRESHOLD ? 'orange' : 'gray'}>
+                    {Math.round(sessionTokens / 1000)}k tokens
+                  </Tag>
+                )}
+                <Tooltip label="Start new conversation">
+                  <IconButton
+                    aria-label="New chat"
+                    icon={<AddIcon />}
+                    onClick={handleNewChat}
+                    variant="ghost"
+                    size="sm"
+                  />
+                </Tooltip>
                 <IconButton
                   aria-label="Toggle color mode"
                   icon={colorMode === 'light' ? <MoonIcon /> : <SunIcon />}
@@ -377,12 +407,40 @@ export default function Home() {
                 <div ref={endOfChatRef} />
               </VStack>
 
+              {sessionTokens > TOKEN_LIMIT && (
+                <Alert status="error" borderRadius="md">
+                  <AlertIcon />
+                  <Box flex="1">
+                    <Text fontWeight="600">Token limit reached</Text>
+                    <Text fontSize="sm">Please start a new chat to continue.</Text>
+                  </Box>
+                  <Button size="sm" colorScheme="red" onClick={handleNewChat}>
+                    New Chat
+                  </Button>
+                </Alert>
+              )}
+
+              {sessionTokens > TOKEN_WARNING_THRESHOLD && sessionTokens <= TOKEN_LIMIT && (
+                <Alert status="warning" borderRadius="md">
+                  <AlertIcon />
+                  <Box flex="1">
+                    <Text fontSize="sm">
+                      Conversation is getting long ({Math.round(sessionTokens / 1000)}k tokens).
+                      Consider starting a new chat soon.
+                    </Text>
+                  </Box>
+                  <Button size="sm" variant="outline" onClick={handleNewChat}>
+                    New Chat
+                  </Button>
+                </Alert>
+              )}
+
               <Stack direction={{ base: 'column', md: 'row' }} spacing={3}>
                 <Textarea
-                  placeholder="Ask about a device, manufacturer, or risk signal..."
+                  placeholder={sessionTokens > TOKEN_LIMIT ? 'Token limit reached - start new chat' : 'Ask about a device, manufacturer, or risk signal...'}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  isDisabled={isStreaming}
+                  isDisabled={isStreaming || sessionTokens > TOKEN_LIMIT}
                   rows={3}
                 />
                 <Button

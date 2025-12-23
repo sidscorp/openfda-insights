@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 import logging
 
+from langgraph.checkpoint.memory import MemorySaver
+
 from .tools import DeviceResolver
 from .config import get_config
 from .agent import FDAAgent, QueryRouter
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Global instances
 router = QueryRouter()
+shared_checkpointer = MemorySaver()
 
 app = FastAPI(
     title="FDA Intelligence API",
@@ -423,7 +426,7 @@ async def agent_stream(
     async def generate_events():
         try:
             allowed_tools = await router.route_async(question)
-            agent = FDAAgent(provider=provider, model=model, allowed_tools=allowed_tools)
+            agent = FDAAgent(provider=provider, model=model, allowed_tools=allowed_tools, checkpointer=shared_checkpointer)
             accumulated_answer = ""
             in_final_response = False
             total_input_tokens = 0

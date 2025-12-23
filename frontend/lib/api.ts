@@ -282,9 +282,14 @@ class APIClient {
     handlers: {
       onEvent?: (event: AgentStreamEvent) => void
       onError?: (err: string) => void
-    }
+    },
+    sessionId?: string
   ): EventSource {
-    const es = new EventSource(`${this.baseUrl}/agent/stream/${encodeURIComponent(question)}`)
+    let url = `${this.baseUrl}/agent/stream/${encodeURIComponent(question)}`
+    if (sessionId) {
+      url += `?session_id=${encodeURIComponent(sessionId)}`
+    }
+    const es = new EventSource(url)
 
     es.onmessage = (event) => {
       try {

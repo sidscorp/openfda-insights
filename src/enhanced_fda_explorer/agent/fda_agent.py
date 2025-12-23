@@ -286,6 +286,7 @@ class FDAAgent:
         guard_model: Optional[str] = None,
         allowed_tools: Optional[list[str]] = None,
         enable_guard: bool = False,
+        checkpointer: Optional[MemorySaver] = None,
         **kwargs
     ):
         """
@@ -298,6 +299,8 @@ class FDAAgent:
             guard_model: Optional cheaper/different model for the guardrail pass
             allowed_tools: Optional list of tool names to include. If None, uses all tools.
             enable_guard: Whether to enable the guardrail audit pass (extra LLM call)
+            checkpointer: Optional shared checkpointer for cross-request session persistence.
+                         If provided, enable_persistence is ignored.
             **kwargs: Additional provider-specific arguments (e.g., region for bedrock)
         """
         config = get_config()
@@ -331,7 +334,10 @@ class FDAAgent:
 
         self.tools = self._create_tools(config, allowed_tools)
         self.llm_with_tools = self.llm.bind_tools(self.tools)
-        self._checkpointer = MemorySaver() if enable_persistence else None
+        if checkpointer is not None:
+            self._checkpointer = checkpointer
+        else:
+            self._checkpointer = MemorySaver() if enable_persistence else None
         self.graph = self._build_graph()
 
     def _create_tools(self, config, allowed_tools: Optional[list[str]] = None) -> list:
