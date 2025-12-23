@@ -2,6 +2,7 @@
 Device Resolver Tool - GUDID database lookup for device identification.
 """
 from typing import Type, Optional, Callable
+import asyncio
 import logging
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -182,20 +183,26 @@ class DeviceResolverTool(BaseTool):
             filtered_codes = [(code, info) for code, info in sorted_codes if info["count"] >= 2]
 
             if filtered_codes:
-                lines.append(f"\nPRODUCT CODES FOUND ({len(filtered_codes)} codes with 2+ devices):")
-                for code, info in filtered_codes:
+                lines.append(f"\nPRODUCT CODES FOUND (Showing top 5 of {len(filtered_codes)} relevant codes):")
+                # LIMIT TO TOP 5 for LLM Context
+                for code, info in filtered_codes[:5]:
                     lines.append(f"  {code}: {info['name']} ({info['count']} devices)")
+                if len(filtered_codes) > 5:
+                    lines.append(f"  ... and {len(filtered_codes) - 5} more codes (see data table).")
             else:
                 lines.append(f"\nNo product codes found with 2+ matching devices.")
 
         if company_counts:
-            lines.append("\nTOP MANUFACTURERS:")
             sorted_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)
+            lines.append(f"\nTOP MANUFACTURERS (Showing top 5 of {len(sorted_companies)}):")
             for company, count in sorted_companies[:5]:
                 lines.append(f"  {company}: {count} devices")
+            if len(sorted_companies) > 5:
+                lines.append(f"  ... and {len(sorted_companies) - 5} more manufacturers.")
 
-        lines.append("\nDETAILED MATCH EXAMPLES:")
-        for i, match in enumerate(response.matches[:8], 1):
+        lines.append(f"\nDETAILED MATCH EXAMPLES (Showing top 3 of {len(response.matches)}):")
+        # LIMIT TO TOP 3 EXAMPLES for LLM Context
+        for i, match in enumerate(response.matches[:3], 1):
             device_name = match.device.brand_name or "N/A"
             if len(device_name) > 50:
                 device_name = device_name[:47] + "..."
@@ -268,16 +275,23 @@ class DeviceResolverTool(BaseTool):
 
         lines = [f"Found {total} devices matching '{query}' (searched in {execution_time:.0f}ms):\n"]
 
-        lines.append(f"PRODUCT CODES FOUND ({len(product_codes)} codes with 2+ devices):")
-        for pc in product_codes:
+        lines.append(f"PRODUCT CODES FOUND (Showing top 5 of {len(product_codes)} relevant codes):")
+        # LIMIT TO TOP 5
+        for pc in product_codes[:5]:
             lines.append(f"  {pc['code']}: {pc['name']} ({pc['device_count']} devices)")
+        
+        if len(product_codes) > 5:
+             lines.append(f"  ... and {len(product_codes) - 5} more codes (available in data table).")
 
         if companies:
-            lines.append("\nTOP MANUFACTURERS:")
-            for c in companies[:10]:
+            lines.append(f"\nTOP MANUFACTURERS (Showing top 5 of {len(companies)}):")
+            # LIMIT TO TOP 5
+            for c in companies[:5]:
                 lines.append(f"  {c['name']}: {c['device_count']} devices")
+            if len(companies) > 5:
+                lines.append(f"  ... and {len(companies) - 5} more manufacturers.")
 
         return "\n".join(lines)
 
     async def _arun(self, query: str, limit: int = 500) -> str:
-        return self._run(query, limit)
+        return await asyncio.to_thread(self._run, query, limit)

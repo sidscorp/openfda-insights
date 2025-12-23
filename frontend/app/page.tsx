@@ -18,6 +18,7 @@ import {
   Textarea,
   Tooltip,
   useColorMode,
+  useColorModeValue,
   useToast,
   VStack,
 } from '@chakra-ui/react'
@@ -25,6 +26,7 @@ import { CloseIcon, MoonIcon, SunIcon } from '@chakra-ui/icons'
 import { apiClient, type AgentStreamEvent } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { StructuredDataTable } from '@/components/StructuredDataTable'
 
 type Role = 'user' | 'assistant' | 'system'
 type StreamPhase = 'thinking' | 'tool' | 'error' | 'final'
@@ -43,6 +45,7 @@ interface ChatMessage {
   content: string
   streaming?: boolean
   meta?: ResponseMeta
+  structuredData?: Record<string, unknown>
 }
 
 type StepStatus = 'queued' | 'running' | 'done' | 'error'
@@ -62,6 +65,8 @@ const starterPrompts = [
 
 export default function Home() {
   const { colorMode, toggleColorMode } = useColorMode()
+  const subtitleColor = useColorModeValue('gray.600', 'gray.200')
+  const sectionLabelColor = useColorModeValue('gray.600', 'gray.300')
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -82,6 +87,7 @@ export default function Home() {
   const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasDeltaRef = useRef(false)
+  const streamCompletedRef = useRef(false)
   const toast = useToast()
 
   const endOfChatRef = useRef<HTMLDivElement | null>(null)
@@ -122,6 +128,7 @@ export default function Home() {
     setMessages((prev) => [...prev, userMessage, assistantMessage])
     setInput('')
     setIsStreaming(true)
+    streamCompletedRef.current = false
     setStreamCompleted(false)
     setStreamStatus({ phase: 'thinking', message: 'Waiting for the model to respond...' })
     setStreamSteps([
@@ -136,7 +143,13 @@ export default function Home() {
 
     const es = apiClient.openAgentStream(text, {
       onEvent: (event: AgentStreamEvent) => {
-        if (event.type === 'thinking') {
+        if (event.type === 'clear') {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMessage.id ? { ...m, content: '' } : m
+            )
+          )
+        } else if (event.type === 'thinking') {
           setStreamStatus({ phase: 'thinking', message: event.content })
           setStreamSteps((prev) =>
             prev.map((step) =>
@@ -208,6 +221,7 @@ export default function Home() {
                   outputTokens: event.output_tokens,
                   cost: event.cost,
                 },
+                structuredData: event.structured_data || undefined,
               }
             })
           )
@@ -242,6 +256,7 @@ export default function Home() {
 
         if (event.type === 'complete' || event.type === 'error') {
           setIsStreaming(false)
+          streamCompletedRef.current = true
           setStreamCompleted(true)
           setActiveUserMessageId(null)
           setTimeout(() => {
@@ -254,7 +269,7 @@ export default function Home() {
       },
       onError: (err) => {
         // Don't show error popup if the stream completed successfully
-        if (streamCompleted) {
+        if (streamCompletedRef.current) {
           return
         }
         
@@ -308,7 +323,7 @@ export default function Home() {
             <Stack spacing={3} direction={{ base: 'column', md: 'row' }} justify="space-between" align="start">
               <Box>
                 <Heading size="lg">FDA Explorer</Heading>
-                <Text color="gray.600">Ask questions about device events, recalls, and approvals.</Text>
+                <Text color={subtitleColor}>Ask questions about device events, recalls, and approvals.</Text>
               </Box>
               <HStack spacing={3}>
                 <Tag colorScheme={isStreaming ? 'green' : 'gray'} variant="subtle">
@@ -329,7 +344,7 @@ export default function Home() {
         <Card>
           <CardHeader pb={2}>
             <HStack justify="space-between">
-              <Text fontWeight="600" color="gray.600">
+              <Text fontWeight="600" color={sectionLabelColor}>
                 Chat
               </Text>
               {isStreaming && (
@@ -417,13 +432,22 @@ function ThinkingPanel({
   const progressPct =
     toolCallsTotal > 0 ? Math.min(100, Math.round((toolCallsDone / toolCallsTotal) * 100)) : 0
 
+  const errorBg = useColorModeValue('red.50', 'red.900')
+  const normalBg = useColorModeValue('orange.50', 'orange.900')
+  const errorBorder = useColorModeValue('red.200', 'red.700')
+  const normalBorder = useColorModeValue('orange.200', 'orange.700')
+  const messageColor = useColorModeValue('gray.700', 'gray.200')
+  const labelColor = useColorModeValue('gray.600', 'gray.400')
+  const stepLabelColor = useColorModeValue('gray.800', 'gray.100')
+  const progressBarBg = useColorModeValue('orange.100', 'orange.800')
+
   return (
     <Box
       mt={3}
       borderRadius="xl"
       borderWidth="1px"
-      borderColor={streamStatus.phase === 'error' ? 'red.200' : 'orange.200'}
-      bg={streamStatus.phase === 'error' ? 'red.50' : 'orange.50'}
+      borderColor={streamStatus.phase === 'error' ? errorBorder : normalBorder}
+      bg={streamStatus.phase === 'error' ? errorBg : normalBg}
       px={4}
       py={3}
     >
@@ -450,20 +474,20 @@ function ThinkingPanel({
       </HStack>
       {showThinking && (
         <>
-          <Text mt={2} color="gray.700">
+          <Text mt={2} color={messageColor}>
             {streamStatus.message}
           </Text>
           {toolCallsTotal > 0 && (
             <Box mt={3}>
               <HStack justify="space-between" mb={1}>
-                <Text fontSize="xs" color="gray.600">
+                <Text fontSize="xs" color={labelColor}>
                   Tool calls
                 </Text>
-                <Text fontSize="xs" color="gray.600">
+                <Text fontSize="xs" color={labelColor}>
                   {toolCallsDone}/{toolCallsTotal}
                 </Text>
               </HStack>
-              <Box height="6px" borderRadius="full" bg="orange.100" overflow="hidden">
+              <Box height="6px" borderRadius="full" bg={progressBarBg} overflow="hidden">
                 <Box height="100%" width={`${progressPct}%`} bg="orange.400" transition="width 0.3s ease" />
               </Box>
             </Box>
@@ -483,11 +507,11 @@ function ThinkingPanel({
                     {step.status === 'error' && 'Fail'}
                   </Tag>
                   <Box>
-                    <Text fontSize="sm" color="gray.800">
+                    <Text fontSize="sm" color={stepLabelColor}>
                       {step.label}
                     </Text>
                     {step.detail && (
-                      <Text fontSize="xs" color="gray.600">
+                      <Text fontSize="xs" color={labelColor}>
                         {step.detail}
                       </Text>
                     )}
@@ -504,8 +528,15 @@ function ThinkingPanel({
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
-  const bg = isUser ? 'brand.50' : 'white'
-  const border = isUser ? 'brand.100' : 'gray.100'
+  const userBg = useColorModeValue('brand.50', 'brand.900')
+  const assistantBg = useColorModeValue('white', 'gray.700')
+  const userBorder = useColorModeValue('brand.100', 'brand.700')
+  const assistantBorder = useColorModeValue('gray.100', 'gray.600')
+  const contentColor = useColorModeValue('gray.800', 'gray.100')
+  const strongColor = useColorModeValue('gray.900', 'white')
+  const codeBackground = useColorModeValue('orange.50', 'whiteAlpha.200')
+  const bg = isUser ? userBg : assistantBg
+  const border = isUser ? userBorder : assistantBorder
 
   return (
     <Box
@@ -526,16 +557,16 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {message.streaming && <Spinner size="sm" color="brand.500" />}
       </HStack>
       <Box
-        color="gray.800"
+        color={contentColor}
         sx={{
           p: { marginTop: 0, marginBottom: 2, whiteSpace: 'pre-wrap' },
           ul: { paddingLeft: 6, marginBottom: 3 },
           ol: { paddingLeft: 6, marginBottom: 3 },
           li: { marginBottom: 1 },
-          strong: { color: 'gray.900' },
+          strong: { color: strongColor },
           code: {
             fontSize: '0.9em',
-            background: 'orange.50',
+            background: codeBackground,
             paddingX: 1.5,
             paddingY: 0.5,
             borderRadius: 'md',
@@ -566,6 +597,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <Text mt={2} fontSize="sm" color="orange.600">
           Thinking...
         </Text>
+      )}
+      {!isUser && message.role !== 'system' && !message.streaming && message.structuredData && (
+        <StructuredDataTable data={message.structuredData as Parameters<typeof StructuredDataTable>[0]['data']} />
       )}
       {!isUser && message.role !== 'system' && message.meta && (
         <HStack spacing={2} mt={3} wrap="wrap">

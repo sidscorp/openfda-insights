@@ -87,6 +87,12 @@ python -m src.enhanced_fda_explorer serve --port 8001
 python -m src.enhanced_fda_explorer serve --port 8001 --reload
 ```
 
+**API Documentation:** Once the server is running, interactive API docs are available at:
+- Swagger UI: `http://localhost:8001/docs`
+- ReDoc: `http://localhost:8001/redoc`
+
+Production API docs: https://openfda-agent.snambiar.com/docs
+
 ## Agent Tools
 
 The AI agent has 10 specialized tools organized into two categories:

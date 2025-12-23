@@ -3,11 +3,10 @@ PMA Approvals Tool - Search FDA Premarket Approval (PMA) database.
 """
 from typing import Type, Optional
 from collections import Counter
-import time
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-import requests
-import httpx
+
+from ...openfda_client import OpenFDAClient
 
 
 class SearchPMAInput(BaseModel):
@@ -25,49 +24,41 @@ class SearchPMATool(BaseTool):
     Use this to find approved high-risk devices, approval dates, and clinical study requirements."""
     args_schema: Type[BaseModel] = SearchPMAInput
 
+    _client: OpenFDAClient
     _api_key: Optional[str] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
+        self._client = OpenFDAClient(api_key=api_key)
+
+    def _build_search(self, query: str, date_from: str, date_to: str) -> str:
+        if query.upper().startswith("P") and len(query) >= 6:
+            search_parts = [f'pma_number:"{query.upper()}"']
+        else:
+            search_parts = [f'(trade_name:"{query}" OR generic_name:"{query}" OR applicant:"{query}")']
+
+        if date_from and date_to:
+            search_parts.append(f'decision_date:[{date_from} TO {date_to}]')
+        elif date_from:
+            search_parts.append(f'decision_date:[{date_from} TO *]')
+        elif date_to:
+            search_parts.append(f'decision_date:[* TO {date_to}]')
+
+        return " AND ".join(search_parts)
 
     def _run(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
         try:
-            url = "https://api.fda.gov/device/pma.json"
-
-            if query.upper().startswith("P") and len(query) >= 6:
-                search_parts = [f'pma_number:"{query.upper()}"']
-            else:
-                search_parts = [f'(trade_name:"{query}" OR generic_name:"{query}" OR applicant:"{query}")']
-
-            if date_from and date_to:
-                search_parts.append(f'decision_date:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'decision_date:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'decision_date:[* TO {date_to}]')
-
-            search = " AND ".join(search_parts)
-
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "decision_date:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
-
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-
+            search = self._build_search(query, date_from, date_to)
+            data = self._client.get(
+                "device/pma.json",
+                params={"search": search, "limit": min(limit, 100)},
+                sort="decision_date:desc"
+            )
             return self._format_results(query, data)
-
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                return f"No PMA approvals found for '{query}'."
-            return f"FDA API error: {str(e)}"
         except Exception as e:
+            if "404" in str(e) or "No results" in str(e):
+                return f"No PMA approvals found for '{query}'."
             return f"Error searching PMA approvals: {str(e)}"
 
     def _format_results(self, query: str, data: dict) -> str:
@@ -131,45 +122,15 @@ class SearchPMATool(BaseTool):
         return "\n".join(lines)
 
     async def _arun(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
-        """Async version using httpx for non-blocking HTTP calls."""
-        start_time = time.time()
         try:
-            url = "https://api.fda.gov/device/pma.json"
-
-            if query.upper().startswith("P") and len(query) >= 6:
-                search_parts = [f'pma_number:"{query.upper()}"']
-            else:
-                search_parts = [f'(trade_name:"{query}" OR generic_name:"{query}" OR applicant:"{query}")']
-
-            if date_from and date_to:
-                search_parts.append(f'decision_date:[{date_from} TO {date_to}]')
-            elif date_from:
-                search_parts.append(f'decision_date:[{date_from} TO *]')
-            elif date_to:
-                search_parts.append(f'decision_date:[* TO {date_to}]')
-
-            search = " AND ".join(search_parts)
-
-            params = {
-                "search": search,
-                "limit": min(limit, 100),
-                "sort": "decision_date:desc"
-            }
-            if self._api_key:
-                params["api_key"] = self._api_key
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-
-            elapsed_ms = (time.time() - start_time) * 1000
-            result = self._format_results(query, data)
-            return f"{result}\n\n[Query completed in {elapsed_ms:.0f}ms]"
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return f"No PMA approvals found for '{query}'."
-            return f"FDA API error: {str(e)}"
+            search = self._build_search(query, date_from, date_to)
+            data = await self._client.aget(
+                "device/pma.json",
+                params={"search": search, "limit": min(limit, 100)},
+                sort="decision_date:desc"
+            )
+            return self._format_results(query, data)
         except Exception as e:
+            if "404" in str(e) or "No results" in str(e):
+                return f"No PMA approvals found for '{query}'."
             return f"Error searching PMA approvals: {str(e)}"

@@ -8,6 +8,19 @@ This guide describes a live Next.js server + FastAPI deployment for `openfda-age
 - API (FastAPI): `src/enhanced_fda_explorer` on port `8001`
 - Nginx proxy: `/etc/nginx/sites-available/openfda-agent.snambiar.com`
 
+## API Documentation
+
+FastAPI provides automatic interactive API documentation:
+
+- **Swagger UI**: https://openfda-agent.snambiar.com/docs
+- **ReDoc**: https://openfda-agent.snambiar.com/redoc
+
+These are automatically generated from the API endpoints and provide:
+- Complete list of all endpoints
+- Request/response schemas
+- Interactive testing interface
+- Authentication details
+
 ## Frontend (Next.js)
 
 ```bash

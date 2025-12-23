@@ -36,6 +36,7 @@ export interface MultiAgentResult {
 
 export type AgentStreamEvent =
   | { type: 'start'; question: string }
+  | { type: 'clear' }
   | { type: 'thinking'; content: string }
   | { type: 'delta'; content: string }
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }

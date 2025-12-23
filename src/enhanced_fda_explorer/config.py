@@ -58,8 +58,8 @@ class OpenFDAConfig(BaseModel):
 
 class AIConfig(BaseModel):
     """AI analysis configuration"""
-    provider: str = Field(default="openai", env="AI_PROVIDER")
-    model: str = Field(default="gpt-4", env="AI_MODEL")
+    provider: str = Field(default="openrouter", env="AI_PROVIDER")
+    model: str = Field(default="xiaomi/mimo-v2-flash:free", env="AI_MODEL")
     api_key: Optional[str] = Field(default=None, env="AI_API_KEY")
     base_url: Optional[str] = Field(default=None, env="AI_BASE_URL")
     temperature: float = Field(default=0.3, env="AI_TEMPERATURE", ge=0.0, le=2.0)

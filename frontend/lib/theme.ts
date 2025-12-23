@@ -1,7 +1,7 @@
 import { extendTheme, type ThemeConfig } from '@chakra-ui/react'
 
 const config: ThemeConfig = {
-  initialColorMode: 'dark',
+  initialColorMode: 'system',
   useSystemColorMode: true,
 }
 
@@ -40,10 +40,11 @@ const theme = extendTheme({
   styles: {
     global: (props: any) => ({
       body: {
-        bg: props.colorMode === 'dark' 
-          ? 'linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #334155 100%)'
-          : 'linear-gradient(135deg, #f6f8ff 0%, #eef2ff 40%, #f7fafc 100%)',
-        color: props.colorMode === 'dark' ? '#f1f5f9' : '#0f172a',
+        bg:
+          props.colorMode === 'dark'
+            ? 'linear-gradient(135deg, #0b1220 0%, #0f172a 45%, #111827 100%)'
+            : 'linear-gradient(135deg, #f6f8ff 0%, #eef2ff 40%, #f7fafc 100%)',
+        color: props.colorMode === 'dark' ? '#e2e8f0' : '#0f172a',
       },
       '::selection': {
         background: 'brand.200',
@@ -83,10 +84,19 @@ const theme = extendTheme({
           borderColor: 'brand.200',
           color: 'brand.700',
           _hover: { bg: 'brand.50', borderColor: 'brand.300' },
+          _dark: {
+            borderColor: 'whiteAlpha.300',
+            color: 'gray.100',
+            _hover: { bg: 'whiteAlpha.100', borderColor: 'whiteAlpha.400' },
+          },
         },
         ghost: {
           color: 'brand.700',
           _hover: { bg: 'brand.50' },
+          _dark: {
+            color: 'gray.100',
+            _hover: { bg: 'whiteAlpha.100' },
+          },
         },
       },
     },
@@ -97,9 +107,9 @@ const theme = extendTheme({
         borderColor: 'blackAlpha.50',
         shadow: 'md',
         _dark: {
-          bg: 'whiteAlpha.50',
-          borderColor: 'whiteAlpha.100',
-          shadow: 'dark-lg',
+          bg: 'gray.800',
+          borderColor: 'whiteAlpha.200',
+          shadow: 'lg',
         },
       },
     },

@@ -284,6 +284,8 @@ class FDAAgent:
         model: Optional[str] = None,
         enable_persistence: bool = True,
         guard_model: Optional[str] = None,
+        allowed_tools: Optional[list[str]] = None,
+        enable_guard: bool = False,
         **kwargs
     ):
         """
@@ -294,11 +296,14 @@ class FDAAgent:
             model: Model name (provider-specific). If None, uses provider default.
             enable_persistence: Whether to enable session persistence for multi-turn chat
             guard_model: Optional cheaper/different model for the guardrail pass
+            allowed_tools: Optional list of tool names to include. If None, uses all tools.
+            enable_guard: Whether to enable the guardrail audit pass (extra LLM call)
             **kwargs: Additional provider-specific arguments (e.g., region for bedrock)
         """
         config = get_config()
 
         self.provider = provider
+        self.enable_guard = enable_guard
         if model is None:
             env_model = os.getenv("AI_MODEL")
             if env_model:
@@ -324,17 +329,19 @@ class FDAAgent:
             else LLMFactory.create(provider=provider, model=guard_model, temperature=0.0, **kwargs)
         )
 
-        self.tools = self._create_tools(config)
+        self.tools = self._create_tools(config, allowed_tools)
         self.llm_with_tools = self.llm.bind_tools(self.tools)
         self._checkpointer = MemorySaver() if enable_persistence else None
         self.graph = self._build_graph()
 
-    def _create_tools(self, config) -> list:
+    def _create_tools(self, config, allowed_tools: Optional[list[str]] = None) -> list:
         fda_api_key = config.openfda.api_key if hasattr(config, 'openfda') and config.openfda else None
 
+        # Create ALL tools (needed for resolver_tools mapping)
         self._device_resolver = DeviceResolverTool(db_path=config.gudid_db_path)
         self._manufacturer_resolver = ManufacturerResolverTool(db_path=config.gudid_db_path)
         self._recalls_tool = SearchRecallsTool(api_key=fda_api_key)
+        self._events_tool = SearchEventsTool(api_key=fda_api_key)
         self._location_resolver = LocationResolverTool(api_key=fda_api_key)
         self._aggregations_tool = AggregateRegistrationsTool(api_key=fda_api_key)
 
@@ -344,36 +351,56 @@ class FDAAgent:
             "resolve_location": self._location_resolver,
         }
 
-        return [
-            self._device_resolver,
-            self._manufacturer_resolver,
-            SearchEventsTool(api_key=fda_api_key),
-            self._recalls_tool,
-            Search510kTool(api_key=fda_api_key),
-            SearchPMATool(api_key=fda_api_key),
-            SearchClassificationsTool(api_key=fda_api_key),
-            SearchUDITool(api_key=fda_api_key),
-            SearchRegistrationsTool(api_key=fda_api_key),
-            self._location_resolver,
-            self._aggregations_tool,
-        ]
+        # Map of all available tools by name
+        all_tools_map = {
+            "resolve_device": self._device_resolver,
+            "resolve_manufacturer": self._manufacturer_resolver,
+            "search_events": self._events_tool,
+            "search_recalls": self._recalls_tool,
+            "search_510k": Search510kTool(api_key=fda_api_key),
+            "search_pma": SearchPMATool(api_key=fda_api_key),
+            "search_classifications": SearchClassificationsTool(api_key=fda_api_key),
+            "search_udi": SearchUDITool(api_key=fda_api_key),
+            "search_registrations": SearchRegistrationsTool(api_key=fda_api_key),
+            "resolve_location": self._location_resolver,
+            "aggregate_registrations": self._aggregations_tool,
+        }
+
+        # If allowed_tools specified, filter to only those tools
+        if allowed_tools:
+            filtered_tools = []
+            for tool_name in allowed_tools:
+                if tool_name in all_tools_map:
+                    filtered_tools.append(all_tools_map[tool_name])
+            return filtered_tools
+
+        # Otherwise return all tools (default behavior)
+        return list(all_tools_map.values())
 
     def _build_graph(self) -> StateGraph:
         workflow = StateGraph(AgentState)
 
         workflow.add_node("agent", self._call_model)
         workflow.add_node("tools", ContextAwareToolNode(self.tools, self._resolver_tools))
-        workflow.add_node("guard", self._guard_response)
-
-        workflow.set_entry_point("agent")
-
-        workflow.add_conditional_edges(
-            "agent",
-            self._should_continue,
-            {"continue": "tools", "end": "guard"}
-        )
-        workflow.add_edge("tools", "agent")
-        workflow.add_edge("guard", END)
+        
+        if self.enable_guard:
+            workflow.add_node("guard", self._guard_response)
+            workflow.set_entry_point("agent")
+            workflow.add_conditional_edges(
+                "agent",
+                self._should_continue,
+                {"continue": "tools", "end": "guard"}
+            )
+            workflow.add_edge("tools", "agent")
+            workflow.add_edge("guard", END)
+        else:
+            workflow.set_entry_point("agent")
+            workflow.add_conditional_edges(
+                "agent",
+                self._should_continue,
+                {"continue": "tools", "end": END}
+            )
+            workflow.add_edge("tools", "agent")
 
         return workflow.compile(checkpointer=self._checkpointer)
 
@@ -414,15 +441,23 @@ class FDAAgent:
 
         guard_messages = [SystemMessage(content=review_prompt)] + list(state.get("messages") or [])
         review = self.guard_llm.invoke(guard_messages)
-        # Fallback: if guard returns empty/whitespace, keep the original final answer.
         content = getattr(review, "content", "")
         original = state["messages"][-1]
         original_content = getattr(original, "content", "")
+        
+        # If guard returns empty/whitespace, don't add any message (keep original as-is)
         if not str(content).strip():
-            return {"messages": [original]}
-        # If the guard response is much shorter than the original (likely dropped data), keep the original.
+            return {"messages": []}
+        
+        # If the guard response is much shorter than the original (likely dropped data), don't add any message
         if len(str(content).strip()) < max(10, 0.3 * len(str(original_content).strip())) and str(original_content).strip():
-            return {"messages": [original]}
+            return {"messages": []}
+        
+        # If the guard content is essentially the same as original, don't add duplicate
+        if str(content).strip() == str(original_content).strip():
+            return {"messages": []}
+        
+        # Only return the guard response if it's meaningfully different from the original
         return {"messages": [review]}
 
     def ask(self, question: str, session_id: Optional[str] = None) -> AgentResponse:
@@ -607,6 +642,85 @@ class FDAAgent:
 
         async for event in self.graph.astream(input_state, config=config):
             yield event
+
+    async def stream_tokens_async(self, question: str, session_id: Optional[str] = None):
+        """
+        Stream token-by-token for real-time typing effect on final response.
+
+        Uses LangGraph's astream_events to capture on_chat_model_stream events,
+        providing character-level streaming for the LLM's final answer.
+
+        Args:
+            question: The question to ask
+            session_id: Optional session ID for multi-turn conversations
+
+        Yields:
+            dict events:
+            - {"type": "clear"}  # Signals start of new LLM turn, clear previous content
+            - {"type": "tool_call", "tool": str, "args": dict}
+            - {"type": "tool_result", "content": str}
+            - {"type": "token", "content": str}  # Individual token from LLM
+            - {"type": "message_complete"}  # Signals end of an LLM message
+            - {"type": "usage", "input_tokens": int, "output_tokens": int, "model": str}
+        """
+        input_state = {
+            "messages": [HumanMessage(content=question)],
+            "resolver_context": {},
+            "session_id": session_id
+        }
+
+        config = {}
+        if self._checkpointer:
+            thread_id = session_id or str(uuid.uuid4())
+            config = {"configurable": {"thread_id": thread_id}}
+
+        current_tool_calls = []
+
+        async for event in self.graph.astream_events(input_state, config=config, version="v2"):
+            event_type = event.get("event")
+
+            if event_type == "on_chat_model_start":
+                yield {"type": "clear"}
+
+            elif event_type == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk:
+                    if hasattr(chunk, "tool_call_chunks") and chunk.tool_call_chunks:
+                        for tc in chunk.tool_call_chunks:
+                            if tc.get("name"):
+                                current_tool_calls.append({
+                                    "name": tc.get("name"),
+                                    "args": tc.get("args", {})
+                                })
+
+                    content = getattr(chunk, "content", "")
+                    if content:
+                        yield {"type": "token", "content": content}
+
+            elif event_type == "on_chat_model_end":
+                if current_tool_calls:
+                    for tc in current_tool_calls:
+                        yield {"type": "tool_call", "tool": tc["name"], "args": tc["args"]}
+                    current_tool_calls = []
+
+                output = event.get("data", {}).get("output")
+                if output and isinstance(output, AIMessage):
+                    usage_meta = getattr(output, "usage_metadata", None)
+                    resp_meta = getattr(output, "response_metadata", None)
+                    if usage_meta or resp_meta:
+                        yield {
+                            "type": "usage",
+                            "input_tokens": usage_meta.get("input_tokens", 0) if usage_meta else 0,
+                            "output_tokens": usage_meta.get("output_tokens", 0) if usage_meta else 0,
+                            "model": resp_meta.get("model_name", "") if resp_meta else "",
+                        }
+
+                yield {"type": "message_complete"}
+
+            elif event_type == "on_tool_end":
+                output = event.get("data", {}).get("output", "")
+                if output:
+                    yield {"type": "tool_result", "content": str(output)[:500]}
 
     def ask_with_history(self, question: str, history: list[BaseMessage], session_id: Optional[str] = None) -> AgentResponse:
         """

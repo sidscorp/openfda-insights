@@ -207,36 +207,171 @@ class DeviceResolver:
     def get_product_codes_fast(self, query: str, min_devices: int = 2, limit: int = 100, progress_callback=None) -> Dict[str, Any]:
         """
         Fast SQL-level aggregation to get product codes matching a query.
-        Much faster than search_fuzzy as it doesn't build full DeviceConcepts.
-
-        Returns dict with product_codes, companies, and sample devices.
+        Prioritizes exact matches to avoid expensive full-table scans.
         """
         if not self.conn:
             self.connect()
 
+        clean_query = query.strip()
+        
+        # --- STRATEGY 1: EXACT MATCHES (Indexed/Fast) ---
         if progress_callback:
-            progress_callback("Searching product codes (fast mode)", 0)
+            progress_callback("Checking exact matches...", 0)
+        
+        # 1a. Check exact Product Code
+        exact_code_res = self.conn.execute("""
+            SELECT 
+                pc.product_code,
+                MAX(pc.product_code_name) as product_code_name,
+                COUNT(DISTINCT pc.device_key) as device_count
+            FROM product_codes pc
+            WHERE pc.product_code = ?
+            GROUP BY pc.product_code
+        """, [clean_query.upper()]).fetchall()
 
-        # Generate query variants (singular/plural)
-        query_variants = self._normalize_query(query)
+        # 1b. Check exact Company Name or Brand Name (Case-insensitive but exact string)
+        # We limit this to top results to keep it fast
+        exact_device_res = self.conn.execute("""
+            SELECT 
+                pc.product_code,
+                MAX(pc.product_code_name) as product_code_name,
+                COUNT(DISTINCT d.public_device_record_key) as device_count
+            FROM devices d
+            JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+            WHERE d.company_name ILIKE ? OR d.brand_name ILIKE ?
+            GROUP BY pc.product_code
+            ORDER BY device_count DESC
+            LIMIT ?
+        """, [clean_query, clean_query, limit]).fetchall()
+
+        # If we found high-quality exact matches, return them immediately
+        if exact_code_res or exact_device_res:
+            # Combine results
+            combined_codes = {}
+            
+            for row in exact_code_res:
+                combined_codes[row[0]] = {"code": row[0], "name": row[1], "device_count": row[2]}
+            
+            for row in exact_device_res:
+                if row[0] not in combined_codes:
+                    combined_codes[row[0]] = {"code": row[0], "name": row[1], "device_count": row[2]}
+
+            product_codes = sorted(combined_codes.values(), key=lambda x: x["device_count"], reverse=True)
+            
+            # Fetch top companies associated with these specific product codes or exact device matches
+            # This ensures the "Top Manufacturers" list is relevant to the exact hits
+            code_list = [f"'{c['code']}'" for c in product_codes]
+            code_filter = f"pc.product_code IN ({','.join(code_list)})" if code_list else "1=0"
+            
+            company_results = self.conn.execute(f"""
+                SELECT d.company_name, COUNT(DISTINCT d.public_device_record_key) as device_count
+                FROM devices d
+                JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+                WHERE ({code_filter}) OR (d.company_name ILIKE ? OR d.brand_name ILIKE ?)
+                GROUP BY d.company_name
+                ORDER BY device_count DESC
+                LIMIT 20
+            """, [clean_query, clean_query]).fetchall()
+
+            companies = [
+                {"name": row[0], "device_count": row[1]}
+                for row in company_results
+            ]
+
+            # Calculate total devices
+            total_count = sum(c['device_count'] for c in product_codes)
+
+            return {
+                "query": query,
+                "total_devices": total_count,
+                "product_codes": product_codes,
+                "companies": companies
+            }
+
+        # --- STRATEGY 2: PREFIX MATCH (Index-Friendly/Fast) ---
+        # Searching for "Medtr..." or "Surg..." should use indexes if available.
+        if progress_callback:
+            progress_callback("Checking prefix matches...", 0)
+
+        # We focus on high-value columns: Brand, Company, Product Code Name
+        prefix_conditions = []
+        prefix_params = []
+        for variant in query_variants:
+            prefix_conditions.append("""
+                (d.brand_name ILIKE ? OR d.company_name ILIKE ? OR pc.product_code_name ILIKE ?)
+            """)
+            prefix_params.extend([f"{variant}%"] * 3)
+
+        prefix_where = " OR ".join(prefix_conditions)
+        
+        # Aggregation query for Prefix Match
+        prefix_res = self.conn.execute(f"""
+            SELECT 
+                pc.product_code,
+                MAX(pc.product_code_name) as product_code_name,
+                COUNT(DISTINCT d.public_device_record_key) as device_count
+            FROM devices d
+            JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+            WHERE {prefix_where}
+            GROUP BY pc.product_code
+            HAVING COUNT(DISTINCT d.public_device_record_key) >= ?
+            ORDER BY device_count DESC
+            LIMIT ?
+        """, prefix_params + [min_devices, limit]).fetchall()
+
+        # If we have good prefix matches, return them!
+        if prefix_res:
+            product_codes = [
+                {"code": row[0], "name": row[1], "device_count": row[2]}
+                for row in prefix_res
+            ]
+             
+            # Get top companies for these prefix matches
+            company_results = self.conn.execute(f"""
+                SELECT d.company_name, COUNT(DISTINCT d.public_device_record_key) as device_count
+                FROM devices d
+                JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+                WHERE {prefix_where} AND d.company_name IS NOT NULL
+                GROUP BY d.company_name
+                ORDER BY device_count DESC
+                LIMIT 20
+            """, prefix_params).fetchall()
+
+            companies = [
+                {"name": row[0], "device_count": row[1]}
+                for row in company_results
+            ]
+             
+            total_count = sum(p['device_count'] for p in product_codes)
+
+            return {
+                "query": query,
+                "total_devices": total_count,
+                "product_codes": product_codes,
+                "companies": companies
+            }
+
+        # --- STRATEGY 3: BROAD CONTAINS SEARCH (Slow Fallback) ---
+        # Only run this if Exact and Prefix failed.
+        if progress_callback:
+            progress_callback("Searching product codes (broad search)", 0)
 
         # Build OR conditions for all variants
         variant_conditions = []
         params = []
         for variant in query_variants:
             variant_conditions.append("""
-                (d.brand_name ILIKE ? OR d.device_description ILIKE ? OR d.company_name ILIKE ?
+                (d.brand_name ILIKE ? OR d.company_name ILIKE ?
                  OR pc.product_code_name ILIKE ? OR pc.product_code ILIKE ? OR g.gmdn_pt_name ILIKE ?)
             """)
-            params.extend([f"%{variant}%"] * 6)
+            params.extend([f"%{variant}%"] * 5)
 
         where_clause = " OR ".join(variant_conditions)
-
-        # Single query to get product codes with counts - searches across all relevant fields
-        # Aggregate by product_code only (not product_code_name) to avoid duplicates from case differences
+        
+        # Single query to get product codes with counts
         results = self.conn.execute(f"""
             WITH matching_devices AS (
-                SELECT DISTINCT d.public_device_record_key, d.brand_name, d.company_name, d.device_description
+                SELECT DISTINCT d.public_device_record_key, d.brand_name, d.company_name
                 FROM devices d
                 LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
                 LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
@@ -280,13 +415,7 @@ class DeviceResolver:
         ]
 
         # Get total device count
-        total_count = self.conn.execute(f"""
-            SELECT COUNT(DISTINCT d.public_device_record_key)
-            FROM devices d
-            LEFT JOIN product_codes pc ON d.public_device_record_key = pc.device_key
-            LEFT JOIN gmdn_terms g ON d.public_device_record_key = g.device_key
-            WHERE {where_clause}
-        """, params).fetchone()[0]
+        total_count = sum(p['device_count'] for p in product_codes)
 
         return {
             "query": query,
@@ -294,7 +423,6 @@ class DeviceResolver:
             "product_codes": product_codes,
             "companies": companies
         }
-
     def search_fuzzy(self, query: str, min_confidence: float = 0.7, limit: int = 100, progress_callback=None, min_devices_per_code: int = 2) -> List[DeviceMatch]:
         """Search for fuzzy matches across text fields.
 
