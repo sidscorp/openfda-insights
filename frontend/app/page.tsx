@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AlertIcon,
@@ -24,7 +24,7 @@ import {
   useToast,
   VStack,
 } from '@chakra-ui/react'
-import { AddIcon, CloseIcon, MoonIcon, SunIcon } from '@chakra-ui/icons'
+import { AddIcon, CheckIcon, CloseIcon, MoonIcon, SunIcon, WarningIcon } from '@chakra-ui/icons'
 import { apiClient, type AgentStreamEvent } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -48,15 +48,6 @@ interface ChatMessage {
   streaming?: boolean
   meta?: ResponseMeta
   structuredData?: Record<string, unknown>
-}
-
-type StepStatus = 'queued' | 'running' | 'done' | 'error'
-
-interface StreamStep {
-  id: string
-  label: string
-  status: StepStatus
-  detail?: string
 }
 
 const starterPrompts = [
@@ -85,8 +76,9 @@ export default function Home() {
   const [streamCompleted, setStreamCompleted] = useState(false)
   const [streamStatus, setStreamStatus] = useState<{ phase: StreamPhase; message: string } | null>(null)
   const [streamSeconds, setStreamSeconds] = useState(0)
-  const [streamSteps, setStreamSteps] = useState<StreamStep[]>([])
-  const [showThinking, setShowThinking] = useState(true)
+  const [toolHistory, setToolHistory] = useState<string[]>([])
+  const [currentTool, setCurrentTool] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [toolCallsTotal, setToolCallsTotal] = useState(0)
   const [toolCallsDone, setToolCallsDone] = useState(0)
   const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null)
@@ -141,12 +133,10 @@ export default function Home() {
     setIsStreaming(true)
     streamCompletedRef.current = false
     setStreamCompleted(false)
-    setStreamStatus({ phase: 'thinking', message: 'Waiting for the model to respond...' })
-    setStreamSteps([
-      { id: 'queue', label: 'Queueing request', status: 'done' },
-      { id: 'thinking', label: 'Interpreting question', status: 'running' },
-    ])
-    setShowThinking(true)
+    setStreamStatus({ phase: 'thinking', message: '' })
+    setToolHistory([])
+    setCurrentTool(null)
+    setErrorMessage(null)
     setToolCallsTotal(0)
     setToolCallsDone(0)
     setActiveUserMessageId(userMessage.id)
@@ -166,25 +156,11 @@ export default function Home() {
         }
 
         if (event.type === 'thinking') {
-          setStreamStatus({ phase: 'thinking', message: event.content })
-          setStreamSteps((prev) =>
-            prev.map((step) =>
-              step.id === 'thinking' ? { ...step, status: 'running' as StepStatus, detail: event.content } : step
-            )
-          )
+          setStreamStatus({ phase: 'thinking', message: '' })
         } else if (event.type === 'delta') {
           hasDeltaRef.current = true
-          setStreamStatus({ phase: 'final', message: 'Drafting response...' })
-          setStreamSteps((prev) => {
-            const next = prev.map((step) =>
-              step.status === 'running' ? { ...step, status: 'done' as StepStatus } : step
-            )
-            const hasDraft = next.some((step) => step.id === 'draft')
-            if (!hasDraft) {
-              next.push({ id: 'draft', label: 'Drafting response', status: 'running' as StepStatus })
-            }
-            return next
-          })
+          setCurrentTool(null)
+          setStreamStatus({ phase: 'final', message: '' })
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMessage.id
@@ -193,35 +169,13 @@ export default function Home() {
             )
           )
         } else if (event.type === 'tool_call') {
-          setStreamStatus({ phase: 'tool', message: `Running ${event.tool}...` })
+          setCurrentTool(event.tool)
+          setToolHistory((prev) => [...prev, event.tool])
           setToolCallsTotal((prev) => prev + 1)
-          setStreamSteps((prev) => {
-            const next = prev.map((step) =>
-              step.status === 'running' ? { ...step, status: 'done' as StepStatus } : step
-            )
-            return [
-              ...next,
-              {
-                id: `tool-${event.tool}-${Date.now()}`,
-                label: `Querying ${event.tool.replace(/_/g, ' ')}`,
-                status: 'running' as StepStatus,
-              },
-            ]
-          })
+          setStreamStatus({ phase: 'tool', message: '' })
         } else if (event.type === 'tool_result') {
-          setStreamStatus({ phase: 'tool', message: 'Processing tool results...' })
+          setCurrentTool(null)
           setToolCallsDone((prev) => prev + 1)
-          setStreamSteps((prev) => {
-            const next = prev.map((step) =>
-              step.status === 'running' ? { ...step, status: 'done' as StepStatus } : step
-            )
-            next.push({
-              id: `synth-${Date.now()}`,
-              label: 'Synthesizing findings',
-              status: 'running' as StepStatus,
-            })
-            return next
-          })
         } else if (event.type === 'complete') {
           setMessages((prev) =>
             prev.map((m) => {
@@ -241,33 +195,17 @@ export default function Home() {
               }
             })
           )
-          setStreamStatus({ phase: 'final', message: 'Answer ready.' })
-          setStreamSteps((prev) =>
-            prev
-              .map((step) => (step.status === 'running' ? { ...step, status: 'done' as StepStatus } : step))
-              .concat({
-                id: 'done',
-                label: 'Response delivered',
-                status: 'done' as StepStatus,
-              })
-          )
+          setCurrentTool(null)
+          setStreamStatus({ phase: 'final', message: '' })
         } else if (event.type === 'error') {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMessage.id ? { ...m, content: `Error: ${event.message}`, streaming: false } : m
             )
           )
+          setCurrentTool(null)
+          setErrorMessage(event.message)
           setStreamStatus({ phase: 'error', message: event.message })
-          setStreamSteps((prev) =>
-            prev
-              .map((step) => (step.status === 'running' ? { ...step, status: 'error' as StepStatus } : step))
-              .concat({
-                id: 'error',
-                label: 'Request failed',
-                status: 'error' as StepStatus,
-                detail: event.message,
-              })
-          )
         }
 
         if (event.type === 'complete' || event.type === 'error') {
@@ -290,6 +228,8 @@ export default function Home() {
         }
         
         setIsStreaming(false)
+        setCurrentTool(null)
+        setErrorMessage(err || 'Connection lost')
         setStreamStatus({ phase: 'error', message: err || 'Connection lost' })
         setActiveUserMessageId(null)
         setMessages((prev) =>
@@ -316,8 +256,9 @@ export default function Home() {
     setIsStreaming(false)
     setStreamCompleted(true) // Mark as completed to prevent error popup
     setStreamStatus(null)
-    setStreamSteps([])
-    setShowThinking(false)
+    setToolHistory([])
+    setCurrentTool(null)
+    setErrorMessage(null)
     setToolCallsTotal(0)
     setToolCallsDone(0)
     setActiveUserMessageId(null)
@@ -394,10 +335,10 @@ export default function Home() {
                       <ThinkingPanel
                         isStreaming={isStreaming}
                         streamSeconds={streamSeconds}
-                        streamStatus={streamStatus}
-                        streamSteps={streamSteps}
-                        showThinking={showThinking}
-                        onToggle={() => setShowThinking((prev) => !prev)}
+                        phase={streamStatus.phase}
+                        errorMessage={errorMessage}
+                        toolHistory={toolHistory}
+                        currentTool={currentTool}
                         toolCallsDone={toolCallsDone}
                         toolCallsTotal={toolCallsTotal}
                       />
@@ -468,117 +409,133 @@ export default function Home() {
   )
 }
 
+function formatToolName(tool: string): string {
+  return tool.replace(/_/g, ' ').replace(/^search /, '')
+}
+
 function ThinkingPanel({
   isStreaming,
   streamSeconds,
-  streamStatus,
-  streamSteps,
-  showThinking,
-  onToggle,
+  phase,
+  errorMessage,
+  toolHistory,
+  currentTool,
   toolCallsDone,
   toolCallsTotal,
 }: {
   isStreaming: boolean
   streamSeconds: number
-  streamStatus: { phase: StreamPhase; message: string }
-  streamSteps: StreamStep[]
-  showThinking: boolean
-  onToggle: () => void
+  phase: StreamPhase
+  errorMessage: string | null
+  toolHistory: string[]
+  currentTool: string | null
   toolCallsDone: number
   toolCallsTotal: number
 }) {
-  const progressPct =
-    toolCallsTotal > 0 ? Math.min(100, Math.round((toolCallsDone / toolCallsTotal) * 100)) : 0
+  const progressPct = toolCallsTotal > 0 ? Math.round((toolCallsDone / toolCallsTotal) * 100) : 0
 
+  const completeBg = useColorModeValue('green.50', 'green.900')
+  const completeBorder = useColorModeValue('green.200', 'green.700')
+  const completeText = useColorModeValue('green.700', 'green.200')
   const errorBg = useColorModeValue('red.50', 'red.900')
-  const normalBg = useColorModeValue('orange.50', 'orange.900')
   const errorBorder = useColorModeValue('red.200', 'red.700')
-  const normalBorder = useColorModeValue('orange.200', 'orange.700')
-  const messageColor = useColorModeValue('gray.700', 'gray.200')
-  const labelColor = useColorModeValue('gray.600', 'gray.400')
-  const stepLabelColor = useColorModeValue('gray.800', 'gray.100')
+  const errorText = useColorModeValue('red.700', 'red.200')
+  const streamingBg = useColorModeValue('orange.50', 'orange.900')
+  const streamingBorder = useColorModeValue('orange.200', 'orange.700')
+  const breadcrumbColor = useColorModeValue('gray.600', 'gray.300')
+  const currentToolColor = useColorModeValue('orange.600', 'orange.300')
   const progressBarBg = useColorModeValue('orange.100', 'orange.800')
 
+  // Completed state - minimal single line
+  if (!isStreaming && phase === 'final') {
+    return (
+      <HStack
+        mt={3}
+        px={3}
+        py={2}
+        bg={completeBg}
+        borderWidth="1px"
+        borderColor={completeBorder}
+        borderRadius="lg"
+        spacing={2}
+      >
+        <CheckIcon color="green.500" boxSize={3} />
+        <Text fontSize="sm" color={completeText}>
+          Complete • {streamSeconds}s{toolHistory.length > 0 && ` • ${toolHistory.length} tools`}
+        </Text>
+      </HStack>
+    )
+  }
+
+  // Error state
+  if (phase === 'error') {
+    return (
+      <Box mt={3} px={3} py={2} bg={errorBg} borderWidth="1px" borderColor={errorBorder} borderRadius="lg">
+        <HStack spacing={2}>
+          <WarningIcon color="red.500" boxSize={3} />
+          <Text fontSize="sm" color={errorText}>
+            Error • {streamSeconds}s
+          </Text>
+        </HStack>
+        {errorMessage && (
+          <Text fontSize="xs" color={errorText} mt={1} opacity={0.8}>
+            {errorMessage}
+          </Text>
+        )}
+      </Box>
+    )
+  }
+
+  // Streaming state - breadcrumb layout
   return (
     <Box
       mt={3}
-      borderRadius="xl"
-      borderWidth="1px"
-      borderColor={streamStatus.phase === 'error' ? errorBorder : normalBorder}
-      bg={streamStatus.phase === 'error' ? errorBg : normalBg}
       px={4}
       py={3}
+      bg={streamingBg}
+      borderRadius="xl"
+      borderWidth="1px"
+      borderColor={streamingBorder}
     >
-      <HStack justify="space-between" align="start">
-        <HStack spacing={3}>
-          {isStreaming ? <Spinner size="sm" color="orange.500" /> : <Tag size="sm">Status</Tag>}
-          <Text fontWeight="600">
-            {streamStatus.phase === 'thinking' && 'Thinking'}
-            {streamStatus.phase === 'tool' && 'Working'}
-            {streamStatus.phase === 'final' && 'Complete'}
-            {streamStatus.phase === 'error' && 'Error'}
-          </Text>
-        </HStack>
+      <HStack justify="space-between">
         <HStack spacing={2}>
-          {!isStreaming && (
-            <Button size="xs" variant="ghost" onClick={onToggle}>
-              {showThinking ? 'Hide steps' : 'Show steps'}
-            </Button>
-          )}
-          <Tag size="sm" colorScheme={streamStatus.phase === 'error' ? 'red' : 'orange'}>
-            {isStreaming ? `Live • ${streamSeconds}s` : 'Idle'}
-          </Tag>
-        </HStack>
-      </HStack>
-      {showThinking && (
-        <>
-          <Text mt={2} color={messageColor}>
-            {streamStatus.message}
+          <Spinner size="sm" color="orange.500" />
+          <Text fontWeight="600" fontSize="sm">
+            {phase === 'thinking' ? 'Thinking' : 'Working'}
           </Text>
-          {toolCallsTotal > 0 && (
-            <Box mt={3}>
-              <HStack justify="space-between" mb={1}>
-                <Text fontSize="xs" color={labelColor}>
-                  Tool calls
-                </Text>
-                <Text fontSize="xs" color={labelColor}>
-                  {toolCallsDone}/{toolCallsTotal}
-                </Text>
-              </HStack>
-              <Box height="6px" borderRadius="full" bg={progressBarBg} overflow="hidden">
-                <Box height="100%" width={`${progressPct}%`} bg="orange.400" transition="width 0.3s ease" />
-              </Box>
-            </Box>
+        </HStack>
+        <Tag size="sm" colorScheme="orange">
+          {streamSeconds}s
+        </Tag>
+      </HStack>
+
+      {/* Breadcrumb trail */}
+      {(toolHistory.length > 0 || currentTool) && (
+        <HStack mt={2} spacing={1} flexWrap="wrap" fontSize="xs">
+          {toolHistory.map((tool, i) => (
+            <Fragment key={i}>
+              <Text color={breadcrumbColor}>{formatToolName(tool)}</Text>
+              <Text color="gray.400">→</Text>
+            </Fragment>
+          ))}
+          {currentTool && (
+            <Text fontWeight="600" color={currentToolColor}>
+              [{formatToolName(currentTool)}...]
+            </Text>
           )}
-          {streamSteps.length > 0 && (
-            <Stack spacing={2} mt={3}>
-              {streamSteps.slice(-5).map((step) => (
-                <HStack key={step.id} spacing={2} align="start">
-                  <Tag
-                    size="sm"
-                    colorScheme={step.status === 'done' ? 'green' : step.status === 'error' ? 'red' : 'orange'}
-                    variant={step.status === 'running' ? 'solid' : 'subtle'}
-                  >
-                    {step.status === 'done' && 'Done'}
-                    {step.status === 'running' && 'Now'}
-                    {step.status === 'queued' && 'Next'}
-                    {step.status === 'error' && 'Fail'}
-                  </Tag>
-                  <Box>
-                    <Text fontSize="sm" color={stepLabelColor}>
-                      {step.label}
-                    </Text>
-                    {step.detail && (
-                      <Text fontSize="xs" color={labelColor}>
-                        {step.detail}
-                      </Text>
-                    )}
-                  </Box>
-                </HStack>
-              ))}
-            </Stack>
-          )}
-        </>
+        </HStack>
+      )}
+
+      {/* Progress bar */}
+      {toolCallsTotal > 0 && (
+        <Box mt={2}>
+          <Text fontSize="xs" color={breadcrumbColor} mb={1}>
+            {toolCallsDone}/{toolCallsTotal} tools
+          </Text>
+          <Box height="4px" borderRadius="full" bg={progressBarBg} overflow="hidden">
+            <Box height="100%" width={`${progressPct}%`} bg="orange.400" transition="width 0.2s" />
+          </Box>
+        </Box>
       )}
     </Box>
   )

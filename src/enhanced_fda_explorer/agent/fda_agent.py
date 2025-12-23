@@ -8,10 +8,15 @@ import operator
 import json
 import uuid
 import asyncio
+import logging
+import time
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage, ToolMessage
+
+logger = logging.getLogger("fda_agent")
+tool_logger = logging.getLogger("fda_agent.tools")
 
 from .prompts import get_fda_system_prompt
 from .tools import (
@@ -78,6 +83,20 @@ class ContextAwareToolNode:
     def __init__(self, tools: list, resolver_tools: dict[str, Any]):
         self.tools = {t.name: t for t in tools}
         self.resolver_tools = resolver_tools
+        self._call_count = 0
+        self._tool_history: list[dict] = []
+        self._recent_calls: list[tuple[str, str]] = []
+
+    def _is_duplicate_call(self, tool_name: str, args_key: str) -> bool:
+        """Check if this exact tool+args combination was called recently."""
+        call_sig = (tool_name, args_key)
+        if call_sig in self._recent_calls[-5:]:
+            tool_logger.warning(f"Duplicate tool call detected: {tool_name}({args_key})")
+            return True
+        self._recent_calls.append(call_sig)
+        if len(self._recent_calls) > 20:
+            self._recent_calls = self._recent_calls[-20:]
+        return False
 
     def __call__(self, state: AgentState) -> dict:
         messages = state["messages"]
@@ -86,28 +105,66 @@ class ContextAwareToolNode:
         if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
             return {"messages": []}
 
+        self._call_count += 1
         tool_messages = []
+
         for tool_call in last_message.tool_calls:
             tool_name = tool_call.get("name", "")
             tool_args = tool_call.get("args", {})
             tool_id = tool_call.get("id", "")
 
+            args_key = json.dumps(tool_args, sort_keys=True, default=str)
+            if self._is_duplicate_call(tool_name, args_key):
+                tool_messages.append(ToolMessage(
+                    content=f"This exact {tool_name} call was already made. The results are in a previous message. Please use those results instead of calling the tool again.",
+                    tool_call_id=tool_id,
+                    name=tool_name
+                ))
+                continue
+
+            start_time = time.time()
+            tool_logger.info(f"[Step {self._call_count}] TOOL_CALL: {tool_name}")
+            tool_logger.info(f"  Args: {json.dumps(tool_args, default=str)[:500]}")
+
             tool = self.tools.get(tool_name)
             if tool:
                 try:
                     result = tool.invoke(tool_args)
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    result_preview = str(result)[:300] + "..." if len(str(result)) > 300 else str(result)
+                    tool_logger.info(f"  Result ({elapsed_ms:.0f}ms): {result_preview}")
+
+                    self._tool_history.append({
+                        "step": self._call_count,
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "elapsed_ms": elapsed_ms,
+                        "success": True
+                    })
+
                     tool_messages.append(ToolMessage(
                         content=str(result),
                         tool_call_id=tool_id,
                         name=tool_name
                     ))
                 except Exception as e:
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    tool_logger.error(f"  ERROR ({elapsed_ms:.0f}ms): {str(e)}")
+                    self._tool_history.append({
+                        "step": self._call_count,
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "elapsed_ms": elapsed_ms,
+                        "success": False,
+                        "error": str(e)
+                    })
                     tool_messages.append(ToolMessage(
                         content=f"Error executing {tool_name}: {str(e)}",
                         tool_call_id=tool_id,
                         name=tool_name
                     ))
             else:
+                tool_logger.warning(f"  Unknown tool: {tool_name}")
                 tool_messages.append(ToolMessage(
                     content=f"Unknown tool: {tool_name}",
                     tool_call_id=tool_id,
@@ -124,22 +181,35 @@ class ContextAwareToolNode:
 
     async def ainvoke(self, state: AgentState) -> dict:
         """Async version that runs tool _arun methods concurrently."""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"DEBUG ainvoke state: {type(state)}, messages type: {type(state.get('messages'))}")
         messages = state["messages"]
         last_message = messages[-1]
 
         if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
             return {"messages": []}
 
+        self._call_count += 1
+        step = self._call_count
+
         async def execute_tool(tool_call: dict) -> ToolMessage:
             tool_name = tool_call.get("name", "")
             tool_args = tool_call.get("args", {})
             tool_id = tool_call.get("id", "")
 
+            args_key = json.dumps(tool_args, sort_keys=True, default=str)
+            if self._is_duplicate_call(tool_name, args_key):
+                return ToolMessage(
+                    content=f"This exact {tool_name} call was already made. The results are in a previous message. Please use those results instead of calling the tool again.",
+                    tool_call_id=tool_id,
+                    name=tool_name
+                )
+
+            start_time = time.time()
+            tool_logger.info(f"[Step {step}] TOOL_CALL: {tool_name}")
+            tool_logger.info(f"  Args: {json.dumps(tool_args, default=str)[:500]}")
+
             tool = self.tools.get(tool_name)
             if not tool:
+                tool_logger.warning(f"  Unknown tool: {tool_name}")
                 return ToolMessage(
                     content=f"Unknown tool: {tool_name}",
                     tool_call_id=tool_id,
@@ -153,12 +223,35 @@ class ContextAwareToolNode:
                     result = await tool._arun(**tool_args)
                 else:
                     result = tool.invoke(tool_args)
+
+                elapsed_ms = (time.time() - start_time) * 1000
+                result_preview = str(result)[:300] + "..." if len(str(result)) > 300 else str(result)
+                tool_logger.info(f"  Result ({elapsed_ms:.0f}ms): {result_preview}")
+
+                self._tool_history.append({
+                    "step": step,
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "elapsed_ms": elapsed_ms,
+                    "success": True
+                })
+
                 return ToolMessage(
                     content=str(result),
                     tool_call_id=tool_id,
                     name=tool_name
                 )
             except Exception as e:
+                elapsed_ms = (time.time() - start_time) * 1000
+                tool_logger.error(f"  ERROR ({elapsed_ms:.0f}ms): {str(e)}")
+                self._tool_history.append({
+                    "step": step,
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "elapsed_ms": elapsed_ms,
+                    "success": False,
+                    "error": str(e)
+                })
                 return ToolMessage(
                     content=f"Error executing {tool_name}: {str(e)}",
                     tool_call_id=tool_id,
@@ -305,6 +398,9 @@ class FDAAgent:
         """
         config = get_config()
 
+        if config.langsmith.configure_environment():
+            logger.info("LangSmith tracing enabled")
+
         self.provider = provider
         self.enable_guard = enable_guard
         if model is None:
@@ -411,10 +507,10 @@ class FDAAgent:
         return workflow.compile(checkpointer=self._checkpointer)
 
     def _call_model(self, state: AgentState) -> dict:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"DEBUG _call_model state: {type(state)}, messages type: {type(state.get('messages'))}, messages value: {state.get('messages')}")
         messages = list(state.get("messages") or [])
+        msg_count = len(messages)
+        tool_msg_count = sum(1 for m in messages if isinstance(m, ToolMessage))
+        logger.debug(f"_call_model: {msg_count} messages ({tool_msg_count} tool results)")
 
         has_system = any(isinstance(m, SystemMessage) for m in messages)
         if not has_system:
@@ -485,11 +581,12 @@ class FDAAgent:
             "session_id": session_id
         }
 
-        config = None
+        config = {"recursion_limit": 15}
         if self._checkpointer:
             thread_id = session_id or str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id}}
+            config["configurable"] = {"thread_id": thread_id}
 
+        logger.info(f"Agent.ask: '{question[:80]}...' (session={session_id})")
         result = self.graph.invoke(input_state, config=config)
         return self._extract_response(result)
 
@@ -514,11 +611,12 @@ class FDAAgent:
             "session_id": session_id
         }
 
-        config = None
+        config = {"recursion_limit": 15}
         if self._checkpointer:
             thread_id = session_id or str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id}}
+            config["configurable"] = {"thread_id": thread_id}
 
+        logger.info(f"Agent.ask_async: '{question[:80]}...' (session={session_id})")
         result = await self.graph.ainvoke(input_state, config=config)
         return self._extract_response(result)
 
@@ -616,10 +714,10 @@ class FDAAgent:
             "session_id": session_id
         }
 
-        config = None
+        config = {"recursion_limit": 15}
         if self._checkpointer:
             thread_id = session_id or str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id}}
+            config["configurable"] = {"thread_id": thread_id}
 
         for event in self.graph.stream(input_state, config=config):
             yield event
@@ -641,10 +739,10 @@ class FDAAgent:
             "session_id": session_id
         }
 
-        config = None
+        config = {"recursion_limit": 15}
         if self._checkpointer:
             thread_id = session_id or str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id}}
+            config["configurable"] = {"thread_id": thread_id}
 
         async for event in self.graph.astream(input_state, config=config):
             yield event
@@ -675,10 +773,10 @@ class FDAAgent:
             "session_id": session_id
         }
 
-        config = {}
+        config = {"recursion_limit": 15}
         if self._checkpointer:
             thread_id = session_id or str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id}}
+            config["configurable"] = {"thread_id": thread_id}
 
         current_tool_calls = []
 

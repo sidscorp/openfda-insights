@@ -349,6 +349,24 @@ class LoggingConfig(BaseModel):
         return v
 
 
+class LangSmithConfig(BaseModel):
+    """LangSmith tracing configuration for LangChain/LangGraph observability"""
+    enabled: bool = Field(default=False, env="LANGCHAIN_TRACING_V2")
+    api_key: Optional[str] = Field(default=None, env="LANGCHAIN_API_KEY")
+    project: str = Field(default="fda-agent", env="LANGCHAIN_PROJECT")
+    endpoint: str = Field(default="https://api.smith.langchain.com", env="LANGCHAIN_ENDPOINT")
+
+    def configure_environment(self):
+        """Set environment variables for LangSmith if enabled."""
+        if self.enabled and self.api_key:
+            os.environ["LANGCHAIN_TRACING_V2"] = "true"
+            os.environ["LANGCHAIN_API_KEY"] = self.api_key
+            os.environ["LANGCHAIN_PROJECT"] = self.project
+            os.environ["LANGCHAIN_ENDPOINT"] = self.endpoint
+            return True
+        return False
+
+
 class MonitoringConfig(BaseModel):
     """Monitoring and observability configuration"""
     enabled: bool = Field(default=False, env="MONITORING_ENABLED")
@@ -385,7 +403,7 @@ class Config(BaseSettings):
     environment: str = Field(default="development", env="ENVIRONMENT")
     debug: bool = Field(default=False, env="DEBUG")
     
-    # Component configurations  
+    # Component configurations
     openfda: OpenFDAConfig = Field(default_factory=OpenFDAConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
@@ -395,6 +413,7 @@ class Config(BaseSettings):
     webui: WebUIConfig = Field(default_factory=WebUIConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
+    langsmith: LangSmithConfig = Field(default_factory=LangSmithConfig)
     
     # Application settings
     app_name: str = Field(default="Enhanced FDA Explorer", env="APP_NAME")
