@@ -1,26 +1,103 @@
-# Enhanced FDA Explorer
+# FDA Explorer
 
-A tool for exploring FDA medical device data with AI-powered analysis.
+An AI-powered tool for exploring FDA medical device data. Ask natural language questions about adverse events, recalls, 510(k) clearances, and more across seven FDA databases.
 
-**Status**: Active development.
+Built as a learning project to explore agentic AI patterns while solving a real problem: making FDA regulatory data accessible without needing to know product codes, database schemas, or query syntax.
 
-## Features
+## The Problem: Why Resolution Matters
 
-- **AI Agent**: Ask natural language questions about FDA device data
-- **Device Resolution**: Map device names to FDA product codes via GUDID database (180M+ devices)
-- **Multi-Provider LLM**: Support for OpenRouter, AWS Bedrock, and Ollama
-- **Seven FDA Databases**: Events (MAUDE), recalls, 510(k), PMA, classifications, UDI, registrations
-- **Geographic Queries**: Filter by manufacturer country (China, Germany, etc.) or region
-- **Multi-Turn Conversations**: Session persistence for follow-up questions
-- **Async Execution**: Concurrent tool execution for faster responses
-- **Multiple Interfaces**: CLI, REST API with SSE streaming
+FDA databases don't understand "surgical mask" or "insulin pump." They use 3-letter product codes like `FXX` (Surgical Mask) or `LZG` (Insulin Pump). To search for mask recalls, you need to:
 
-## Quick Start
+1. Know that masks span codes `FXX`, `MSH`, `OUK`, etc.
+2. Know which FDA database to query (MAUDE for events, Recall Enforcement for recalls)
+3. Construct the right API query syntax
+
+This tool solves that by introducing a **resolution layer** between natural language and FDA APIs:
+
+```
+"Have there been recalls for surgical masks?"
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│  RESOLUTION LAYER                                           │
+│  ┌─────────────────┐                                        │
+│  │ Device Resolver │ "surgical mask" → [FXX, MSH, OUK, ...] │
+│  │ (GUDID: 180M+   │                                        │
+│  │  devices)       │                                        │
+│  └─────────────────┘                                        │
+└─────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────┐
+│  SEARCH LAYER                                               │
+│  search_recalls(product_codes=["FXX", "MSH", "OUK"])        │
+│         │                                                   │
+│         ▼                                                   │
+│  OpenFDA Recall API → Results                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The resolution layer uses a local GUDID (Global Unique Device Identification Database) with 180M+ device records to map natural language to FDA's regulatory vocabulary.
+
+## How It Works
+
+### Architecture
+
+The system is a LangGraph agent with 10 tools organized into two categories:
+
+**Resolvers** translate user concepts into FDA vocabulary:
+| Tool | Purpose | Data Source |
+|------|---------|-------------|
+| `resolve_device` | Device names → product codes | GUDID (local SQLite, 180M+ records) |
+| `resolve_manufacturer` | Company names → FDA firm variations | GUDID |
+| `resolve_location` | Countries/regions → ISO codes | OpenFDA Registrations |
+
+**Searchers** query the seven FDA databases:
+| Tool | Database | What It Contains |
+|------|----------|------------------|
+| `search_events` | MAUDE | Adverse event reports (injuries, malfunctions, deaths) |
+| `search_recalls` | Recall Enforcement | Product recalls and safety alerts |
+| `search_510k` | 510(k) | Premarket notification clearances |
+| `search_pma` | PMA | Premarket approval decisions |
+| `search_classifications` | Classifications | Device regulatory classifications |
+| `search_udi` | UDI | Unique device identifier records |
+| `search_registrations` | Registrations | Manufacturer facility registrations |
+| `aggregate_registrations` | Registrations | Country-level manufacturer statistics |
+
+### Context Flow
+
+The agent maintains conversation state so follow-up questions work naturally:
+
+```
+Turn 1: "What product codes cover syringes?"
+        → resolve_device("syringe")
+        → Returns: FMF (Syringe, Piston), FMI (Syringe, Irrigating), ...
+        → Stored in conversation context
+
+Turn 2: "Have there been recalls for these?"
+        → Agent sees previous context, extracts codes
+        → search_recalls(product_codes=["FMF", "FMI", ...])
+        → Returns recall data
+
+Turn 3: "Which manufacturers are involved?"
+        → Agent references recall data already in context
+        → Summarizes without re-querying
+```
+
+The LangGraph `MemorySaver` checkpointer persists conversation history, and a structured `ResolverContext` stores typed data from resolver tools for downstream use.
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+ (for web frontend)
+- An LLM API key (OpenRouter, AWS Bedrock, or local Ollama)
 
 ### Installation
 
 ```bash
-git clone https://github.com/siddnambiar/openfda-insights.git
+git clone https://github.com/sidscorp/openfda-insights.git
 cd openfda-insights
 
 python -m venv venv
@@ -35,178 +112,118 @@ pip install -e .
 cp .env.example .env
 ```
 
-Set your API keys in `.env`:
+Edit `.env` with your LLM provider credentials:
+
 ```env
-OPENROUTER_API_KEY=your_openrouter_key
-# Or for AWS Bedrock, configure AWS credentials
-# Or for Ollama, no key needed (local)
+# Option 1: OpenRouter (recommended for getting started)
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_key_here
+
+# Option 2: AWS Bedrock
+AI_PROVIDER=bedrock
+# Configure AWS credentials via aws configure
+
+# Option 3: Local Ollama (no API key needed)
+AI_PROVIDER=ollama
+AI_MODEL=llama3.1
 ```
 
-### Usage
+### Download GUDID Database
 
-#### Ask the AI Agent
+The device resolver requires the GUDID database (~2GB):
 
 ```bash
-# Default provider (OpenRouter)
-python -m src.enhanced_fda_explorer ask "What adverse events have been reported for surgical masks?"
+python -m src.enhanced_fda_explorer index-gudid
+```
 
-# Use AWS Bedrock
-python -m src.enhanced_fda_explorer ask --provider bedrock "Has 3M had any device recalls?"
+This downloads and indexes the FDA's GUDID data into a local SQLite database.
 
-# Use local Ollama
-python -m src.enhanced_fda_explorer ask --provider ollama --model llama3.1 "What is the product code for N95?"
+### Running
+
+**CLI (quickest way to test):**
+
+```bash
+# Ask a question
+python -m src.enhanced_fda_explorer ask "What adverse events have been reported for N95 masks?"
 
 # Verbose mode (shows tool calls)
-python -m src.enhanced_fda_explorer ask -v "Compare pacemaker recalls vs defibrillator recalls"
+python -m src.enhanced_fda_explorer ask -v "Compare pacemaker vs defibrillator recalls"
 
-# Geographic queries
-python -m src.enhanced_fda_explorer ask "What mask recalls have come from China?"
-python -m src.enhanced_fda_explorer ask "Show me adverse events for devices from German manufacturers"
+# Resolve a device to product codes
+python -m src.enhanced_fda_explorer resolve "insulin pump"
 ```
 
-#### Resolve Devices to FDA Codes
+**API Server + Web UI:**
 
 ```bash
-# Find FDA product codes for a device
-python -m src.enhanced_fda_explorer resolve "surgical mask"
-
-# Fuzzy search with confidence threshold
-python -m src.enhanced_fda_explorer resolve "insulin pump" --limit 50 --confidence 0.8
-
-# JSON output
-python -m src.enhanced_fda_explorer resolve "3M" --json
-```
-
-#### Start the API Server
-
-```bash
-# Start API server
+# Terminal 1: Start backend
 python -m src.enhanced_fda_explorer serve --port 8001
 
-# With auto-reload for development
-python -m src.enhanced_fda_explorer serve --port 8001 --reload
+# Terminal 2: Start frontend
+cd frontend
+npm install
+npm run dev
 ```
 
-**API Documentation:** Once the server is running, interactive API docs are available at:
-- Swagger UI: `http://localhost:8001/docs`
-- ReDoc: `http://localhost:8001/redoc`
+Then open http://localhost:3000
 
-Production API docs: https://openfda-agent.snambiar.com/docs
+## CLI Reference
 
-## Agent Tools
+```bash
+# Ask the AI agent
+python -m src.enhanced_fda_explorer ask "your question"
+python -m src.enhanced_fda_explorer ask -v "question"           # verbose (show tool calls)
+python -m src.enhanced_fda_explorer ask --provider bedrock "q"  # specify provider
 
-The AI agent has 10 specialized tools organized into two categories:
+# Resolve devices to FDA codes
+python -m src.enhanced_fda_explorer resolve "device name"
+python -m src.enhanced_fda_explorer resolve "device" --limit 20  # more results
+python -m src.enhanced_fda_explorer resolve "device" --json      # JSON output
 
-### Resolvers (Translate User Concepts)
+# Start API server
+python -m src.enhanced_fda_explorer serve --port 8001
+python -m src.enhanced_fda_explorer serve --port 8001 --reload   # dev mode
 
-| Tool | Purpose | Data Source |
-|------|---------|-------------|
-| `resolve_device` | Device names → product codes | GUDID (local SQLite) |
-| `resolve_manufacturer` | Company names → FDA firm variations | GUDID |
-| `resolve_location` | Countries/regions → manufacturers | OpenFDA Registrations |
+# Database management
+python -m src.enhanced_fda_explorer index-gudid                  # download/index GUDID
+```
 
-### Searchers (Query FDA Databases)
+## API Reference
 
-| Tool | Purpose | Data Source |
-|------|---------|-------------|
-| `search_events` | Adverse events (MAUDE) | OpenFDA |
-| `search_recalls` | Product recalls | OpenFDA |
-| `search_510k` | 510(k) clearances | OpenFDA |
-| `search_pma` | PMA approvals | OpenFDA |
-| `search_classifications` | Device classifications | OpenFDA |
-| `search_udi` | UDI records | OpenFDA |
-| `search_registrations` | Establishment registrations | OpenFDA |
-
-See [docs/tools_reference.md](docs/tools_reference.md) for complete parameter documentation.
-
-## LLM Providers
-
-| Provider | Model Examples | Auth |
-|----------|---------------|------|
-| `openrouter` | `anthropic/claude-3-haiku`, `openai/gpt-4` | `OPENROUTER_API_KEY` |
-| `bedrock` | `anthropic.claude-3-haiku-20240307-v1:0` | AWS credentials |
-| `ollama` | `llama3.1`, `mistral` | None (local) |
-
-## API Endpoints
-
-Start the server: `python -m src.enhanced_fda_explorer serve --port 8001`
+Start the server with `python -m src.enhanced_fda_explorer serve --port 8001`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/devices/resolve` | POST | Resolve device to FDA codes |
-| `/api/agent/ask` | POST | Ask the AI agent |
+| `/api/health` | GET | Health check (optionally test LLM connectivity) |
+| `/api/devices/resolve` | POST | Resolve device name to FDA codes |
+| `/api/agent/ask` | POST | Ask the AI agent (blocking) |
 | `/api/agent/stream/{question}` | GET | Stream agent response (SSE) |
 | `/api/agent/providers` | GET | List available LLM providers |
 
-Interactive docs at `http://localhost:8001/docs`
-
-## Data Sources
-
-| Database | Description | Geographic Filter |
-|----------|-------------|-------------------|
-| Device Events (MAUDE) | Adverse event reports | ✅ `country` parameter |
-| Device Recalls | Product recall information | ✅ `country` parameter |
-| 510(k) | Premarket notification clearances | ❌ |
-| PMA | Premarket approval decisions | ❌ |
-| Classifications | Device classification database | ❌ |
-| UDI | Unique device identifier records | ❌ |
-| Registrations | Establishment registrations | ✅ `iso_country_code` field |
-| GUDID | Global UDI Database (local SQLite) | ❌ |
-
-## Architecture
-
-The system uses a single LangGraph agent with shared state for multi-turn conversations:
-
-```
-User Question → FDA Agent → [Resolver Tools] → ResolverContext
-                    ↓
-              [Search Tools] → FDA APIs → Response
-```
-
-Key design decisions:
-- **Single Agent**: One LangGraph agent with 10 tools (not multi-agent)
-- **Resolver → Searcher Pattern**: Resolvers populate shared context, searchers query databases
-- **Async HTTP**: All tools use `httpx.AsyncClient` for concurrent execution
-- **Session Persistence**: `MemorySaver` checkpointer for multi-turn conversations
-
-See [docs/architecture.md](docs/architecture.md) for detailed design documentation.
+Interactive API docs: http://localhost:8001/docs
 
 ## Project Structure
 
 ```
 openfda-insights/
 ├── src/enhanced_fda_explorer/
-│   ├── __init__.py      # Package exports (FDAAgent, DeviceResolver, LLMFactory)
-│   ├── cli.py           # CLI commands (ask, resolve, serve)
-│   ├── api_endpoints.py # FastAPI REST API
-│   ├── llm_factory.py   # Multi-provider LLM factory
-│   ├── config.py        # Configuration management
-│   ├── agent/           # LangGraph FDA agent
-│   │   ├── fda_agent.py # Main agent implementation
-│   │   ├── prompts.py   # System prompts
-│   │   └── tools/       # 10 FDA agent tools
-│   ├── tools/           # Device resolver (GUDID)
-│   ├── models/          # Pydantic models (responses, device models)
-│   └── data/            # GUDID database indexer
-├── frontend/            # Next.js web interface (WIP)
-├── tests/               # Test suite
-└── docs/                # Documentation
-    ├── architecture.md  # Design decisions
-    ├── fda_api.md       # FDA API reference
-    └── tools_reference.md # Tool parameter documentation
+│   ├── cli.py              # CLI commands (ask, resolve, serve)
+│   ├── api_endpoints.py    # FastAPI REST API
+│   ├── llm_factory.py      # Multi-provider LLM factory
+│   ├── config.py           # Configuration management
+│   ├── agent/
+│   │   ├── fda_agent.py    # LangGraph agent implementation
+│   │   ├── prompts.py      # System prompts
+│   │   └── tools/          # Resolver and searcher tools
+│   ├── tools/
+│   │   └── device_resolver.py  # GUDID-based device resolution
+│   └── data/
+│       └── gudid_indexer.py    # GUDID download and indexing
+├── frontend/               # Next.js web interface
+├── tests/                  # Test suite
+└── docs/                   # Additional documentation
 ```
-
-## Documentation
-
-- [Architecture & Design Decisions](docs/architecture.md)
-- [FDA API Reference](docs/fda_api.md)
-- [Tools Reference](docs/tools_reference.md)
-
-## License
-
-MIT License - see LICENSE file.
 
 ## Disclaimer
 
-For research and informational purposes only. Not affiliated with the U.S. FDA. Verify all information independently before making decisions.
+This tool is for research and educational purposes. It is not affiliated with the U.S. Food and Drug Administration. FDA data is provided as-is from public APIs. Always verify information independently before making regulatory or clinical decisions.
