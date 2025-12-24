@@ -52,11 +52,23 @@ interface ChatMessage {
   structuredData?: Record<string, unknown>
 }
 
-const starterPrompts = [
-  'What FDA product codes are associated with syringes?',
-  'Which manufacturer makes the most surgical masks?',
-  'Have there been recent recalls associated with pacemakers?',
+const allStarterPrompts = [
+  'What are the product codes for ventilators?',
+  'What FDA product codes are associated with infusion pumps?',
+  'Have there been recent recalls associated with insulin pumps?',
+  'What recalls have been issued for hip implants in the last year?',
+  'What adverse events have been reported for MRI machines?',
+  'What are common malfunctions reported for cochlear implants?',
+  'Which companies received 510(k) clearance for glucose monitors this year?',
+  'What PMA approvals exist for heart valves?',
+  'What facilities manufacture pacemakers in the United States?',
+  'Who are the top manufacturers of orthopedic implants?',
 ]
+
+function getRandomPrompts(count: number): string[] {
+  const shuffled = [...allStarterPrompts].sort(() => Math.random() - 0.5)
+  return shuffled.slice(0, count)
+}
 
 const TOKEN_WARNING_THRESHOLD = 50000
 const TOKEN_LIMIT = 100000
@@ -86,6 +98,7 @@ function ChatArea() {
   const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null)
   const [sessionTokens, setSessionTokens] = useState(0)
   const [hasGeneratedTitle, setHasGeneratedTitle] = useState(false)
+  const [starterPrompts] = useState(() => getRandomPrompts(3))
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasDeltaRef = useRef(false)
   const streamCompletedRef = useRef(false)
