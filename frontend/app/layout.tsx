@@ -3,7 +3,7 @@ import './globals.css'
 import Providers from './providers'
 
 export const metadata: Metadata = {
-  title: 'FDA Explorer - Medical Device Intelligence',
+  title: 'OpenFDA Explorer - Medical Device Intelligence',
   description: 'Explore FDA medical device data with AI-powered insights',
 }
 

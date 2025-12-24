@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import {
   Alert,
   AlertIcon,
@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   CardBody,
-  CardHeader,
   Container,
   HStack,
   Heading,
@@ -24,11 +23,14 @@ import {
   useToast,
   VStack,
 } from '@chakra-ui/react'
-import { AddIcon, CheckIcon, CloseIcon, MoonIcon, SunIcon, WarningIcon } from '@chakra-ui/icons'
+import { CheckIcon, CloseIcon, MoonIcon, SunIcon, WarningIcon } from '@chakra-ui/icons'
 import { apiClient, type AgentStreamEvent } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { StructuredDataTable } from '@/components/StructuredDataTable'
+import { WorkspaceLayout } from '@/components/WorkspaceLayout'
+import { useSession } from '@/lib/session-context'
+import type { StoredMessage } from '@/lib/storage'
 
 type Role = 'user' | 'assistant' | 'system'
 type StreamPhase = 'thinking' | 'tool' | 'error' | 'final'
@@ -51,27 +53,27 @@ interface ChatMessage {
 }
 
 const starterPrompts = [
-  'Summarize recent adverse events for pacemakers',
-  'Any recalls for insulin pumps mentioning battery issues?',
-  'Compare MAUDE signals for endoscopy towers vs laparoscopic cameras',
+  'What FDA product codes are associated with syringes?',
+  'Which manufacturer makes the most surgical masks?',
+  'Have there been recent recalls associated with pacemakers?',
 ]
 
 const TOKEN_WARNING_THRESHOLD = 50000
 const TOKEN_LIMIT = 100000
 
 export default function Home() {
+  return (
+    <WorkspaceLayout>
+      <ChatArea />
+    </WorkspaceLayout>
+  )
+}
+
+function ChatArea() {
   const { colorMode, toggleColorMode } = useColorMode()
   const subtitleColor = useColorModeValue('gray.600', 'gray.200')
-  const sectionLabelColor = useColorModeValue('gray.600', 'gray.300')
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'system',
-      role: 'system',
-      content:
-        'I analyze FDA device data (MAUDE, recalls, 510(k), PMA). Ask about devices, manufacturers, risks, or trends.',
-    },
-  ])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamCompleted, setStreamCompleted] = useState(false)
   const [streamStatus, setStreamStatus] = useState<{ phase: StreamPhase; message: string } | null>(null)
@@ -82,14 +84,64 @@ export default function Home() {
   const [toolCallsTotal, setToolCallsTotal] = useState(0)
   const [toolCallsDone, setToolCallsDone] = useState(0)
   const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null)
-  const [sessionId] = useState(() => crypto.randomUUID())
   const [sessionTokens, setSessionTokens] = useState(0)
+  const [hasGeneratedTitle, setHasGeneratedTitle] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasDeltaRef = useRef(false)
   const streamCompletedRef = useRef(false)
   const toast = useToast()
 
+  const {
+    currentSession,
+    currentMessages,
+    createSession,
+    addMessage,
+    updateSessionTitle,
+  } = useSession()
+
   const endOfChatRef = useRef<HTMLDivElement | null>(null)
+  const sessionInitiatedRef = useRef(false)
+
+  useEffect(() => {
+    if (!currentSession && !sessionInitiatedRef.current) {
+      sessionInitiatedRef.current = true
+      createSession()
+    }
+  }, [currentSession, createSession])
+
+  useEffect(() => {
+    // Don't reconstruct messages during streaming - it would lose local state
+    if (isStreaming) return
+
+    if (currentMessages.length > 0) {
+      const reconstructedMessages: ChatMessage[] = [
+        {
+          id: 'system',
+          role: 'system',
+          content: 'Welcome to OpenFDA Explorer! I can help you research medical device recalls, adverse events, 510(k) clearances, and manufacturer data. Try the example questions below or ask your own.',
+        },
+        ...currentMessages.map((m) => ({
+          id: m.id,
+          role: m.role as Role,
+          content: m.content,
+          meta: m.meta as ResponseMeta,
+          structuredData: m.structuredData as Record<string, unknown>,
+        })),
+      ]
+      setMessages(reconstructedMessages)
+      setHasGeneratedTitle(true)
+    } else {
+      setMessages([
+        {
+          id: 'system',
+          role: 'system',
+          content: 'Welcome to OpenFDA Explorer! I can help you research medical device recalls, adverse events, 510(k) clearances, and manufacturer data. Try the example questions below or ask your own.',
+        },
+      ])
+      setHasGeneratedTitle(false)
+    }
+  }, [currentMessages, isStreaming])
+
   useEffect(() => {
     endOfChatRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -108,145 +160,199 @@ export default function Home() {
 
   const canSend = input.trim().length > 0 && !isStreaming && sessionTokens <= TOKEN_LIMIT
 
-  const handleNewChat = () => {
-    window.location.reload()
-  }
+  const handleNewChat = useCallback(() => {
+    sessionInitiatedRef.current = true
+    createSession()
+    setSessionTokens(0)
+    setHasGeneratedTitle(false)
+  }, [createSession])
 
-  const handleSend = (prompt?: string) => {
-    const text = prompt ?? input.trim()
-    if (!text || isStreaming) return
-
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: text,
-    }
-    const assistantMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: '',
-      streaming: true,
-    }
-
-    setMessages((prev) => [...prev, userMessage, assistantMessage])
-    setInput('')
-    setIsStreaming(true)
-    streamCompletedRef.current = false
-    setStreamCompleted(false)
-    setStreamStatus({ phase: 'thinking', message: '' })
-    setToolHistory([])
-    setCurrentTool(null)
-    setErrorMessage(null)
-    setToolCallsTotal(0)
-    setToolCallsDone(0)
-    setActiveUserMessageId(userMessage.id)
-    hasDeltaRef.current = false
-
-    const es = apiClient.openAgentStream(text, {
-      onEvent: (event: AgentStreamEvent) => {
-        if (event.type === 'clear') {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMessage.id ? { ...m, content: '' } : m
-            )
-          )
-        } else if (event.type === 'complete') {
-          const newTokens = (event.input_tokens || 0) + (event.output_tokens || 0)
-          setSessionTokens((prev) => prev + newTokens)
+  const generateTitleIfNeeded = useCallback(
+    async (userMessage: string, assistantResponse: string) => {
+      if (hasGeneratedTitle || !currentSession) return
+      try {
+        const { title } = await apiClient.generateSessionTitle(userMessage, assistantResponse)
+        if (title && title !== 'New Chat') {
+          await updateSessionTitle(currentSession.id, title)
         }
+        setHasGeneratedTitle(true)
+      } catch (err) {
+        console.error('Failed to generate title:', err)
+      }
+    },
+    [hasGeneratedTitle, currentSession, updateSessionTitle]
+  )
 
-        if (event.type === 'thinking') {
-          setStreamStatus({ phase: 'thinking', message: '' })
-        } else if (event.type === 'delta') {
-          hasDeltaRef.current = true
-          setCurrentTool(null)
-          setStreamStatus({ phase: 'final', message: '' })
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMessage.id
-                ? { ...m, content: `${m.content}${event.content}`, streaming: true }
-                : m
-            )
-          )
-        } else if (event.type === 'tool_call') {
-          setCurrentTool(event.tool)
-          setToolHistory((prev) => [...prev, event.tool])
-          setToolCallsTotal((prev) => prev + 1)
-          setStreamStatus({ phase: 'tool', message: '' })
-        } else if (event.type === 'tool_result') {
-          setCurrentTool(null)
-          setToolCallsDone((prev) => prev + 1)
-        } else if (event.type === 'complete') {
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== assistantMessage.id) return m
-              return {
-                ...m,
-                content: hasDeltaRef.current ? m.content : event.answer,
-                streaming: false,
+  const handleSend = useCallback(
+    (prompt?: string) => {
+      const text = prompt ?? input.trim()
+      if (!text || isStreaming || !currentSession) return
+
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: text,
+      }
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '',
+        streaming: true,
+      }
+
+      setMessages((prev) => [...prev, userMessage, assistantMessage])
+      setInput('')
+      setIsStreaming(true)
+      streamCompletedRef.current = false
+      setStreamCompleted(false)
+      setStreamStatus({ phase: 'thinking', message: '' })
+      setToolHistory([])
+      setCurrentTool(null)
+      setErrorMessage(null)
+      setToolCallsTotal(0)
+      setToolCallsDone(0)
+      setActiveUserMessageId(userMessage.id)
+      hasDeltaRef.current = false
+
+      addMessage({ role: 'user', content: text }, userMessage.id)
+
+      const es = apiClient.openAgentStream(
+        text,
+        {
+          onEvent: (event: AgentStreamEvent) => {
+            if (event.type === 'clear') {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantMessage.id ? { ...m, content: '' } : m))
+              )
+            } else if (event.type === 'complete') {
+              const newTokens = (event.input_tokens || 0) + (event.output_tokens || 0)
+              setSessionTokens((prev) => prev + newTokens)
+            }
+
+            if (event.type === 'thinking') {
+              setStreamStatus({ phase: 'thinking', message: '' })
+            } else if (event.type === 'delta') {
+              hasDeltaRef.current = true
+              setCurrentTool(null)
+              setStreamStatus({ phase: 'final', message: '' })
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMessage.id
+                    ? { ...m, content: `${m.content}${event.content}`, streaming: true }
+                    : m
+                )
+              )
+            } else if (event.type === 'tool_call') {
+              setCurrentTool(event.tool)
+              setToolHistory((prev) => [...prev, event.tool])
+              setToolCallsTotal((prev) => prev + 1)
+              setStreamStatus({ phase: 'tool', message: '' })
+            } else if (event.type === 'tool_result') {
+              setCurrentTool(null)
+              setToolCallsDone((prev) => prev + 1)
+            } else if (event.type === 'complete') {
+              const finalContent = hasDeltaRef.current ? undefined : event.answer
+              setMessages((prev) =>
+                prev.map((m) => {
+                  if (m.id !== assistantMessage.id) return m
+                  return {
+                    ...m,
+                    content: finalContent ?? m.content,
+                    streaming: false,
+                    meta: {
+                      model: event.model,
+                      tokens: event.tokens,
+                      inputTokens: event.input_tokens,
+                      outputTokens: event.output_tokens,
+                      cost: event.cost,
+                    },
+                    structuredData: event.structured_data || undefined,
+                  }
+                })
+              )
+
+              // Use event.answer since we can't reliably get streamed content from stale closure
+              const assistantContent = event.answer
+
+              addMessage({
+                role: 'assistant',
+                content: assistantContent,
                 meta: {
                   model: event.model,
                   tokens: event.tokens,
-                  inputTokens: event.input_tokens,
-                  outputTokens: event.output_tokens,
                   cost: event.cost,
                 },
-                structuredData: event.structured_data || undefined,
-              }
-            })
-          )
-          setCurrentTool(null)
-          setStreamStatus({ phase: 'final', message: '' })
-        } else if (event.type === 'error') {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMessage.id ? { ...m, content: `Error: ${event.message}`, streaming: false } : m
-            )
-          )
-          setCurrentTool(null)
-          setErrorMessage(event.message)
-          setStreamStatus({ phase: 'error', message: event.message })
-        }
+                structuredData: event.structured_data,
+              }, assistantMessage.id)
 
-        if (event.type === 'complete' || event.type === 'error') {
-          setIsStreaming(false)
-          streamCompletedRef.current = true
-          setStreamCompleted(true)
-          setActiveUserMessageId(null)
-          setTimeout(() => {
-            if (eventSourceRef.current) {
-              eventSourceRef.current.close()
-              eventSourceRef.current = null
+              generateTitleIfNeeded(text, assistantContent)
+
+              setCurrentTool(null)
+              setStreamStatus({ phase: 'final', message: '' })
+            } else if (event.type === 'error') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMessage.id
+                    ? { ...m, content: `Error: ${event.message}`, streaming: false }
+                    : m
+                )
+              )
+              setCurrentTool(null)
+              setErrorMessage(event.message)
+              setStreamStatus({ phase: 'error', message: event.message })
             }
-          }, 500)
-        }
-      },
-      onError: (err) => {
-        // Don't show error popup if the stream completed successfully
-        if (streamCompletedRef.current) {
-          return
-        }
-        
-        setIsStreaming(false)
-        setCurrentTool(null)
-        setErrorMessage(err || 'Connection lost')
-        setStreamStatus({ phase: 'error', message: err || 'Connection lost' })
-        setActiveUserMessageId(null)
-        setMessages((prev) =>
-          prev.map((m) => (m.streaming ? { ...m, streaming: false, content: `${m.content}\n${err}` } : m))
-        )
-        toast({
-          title: 'Connection lost',
-          description: err || 'Check the API URL and server status.',
-          status: 'error',
-          duration: 4000,
-          isClosable: true,
-        })
-      },
-    }, sessionId)
 
-    eventSourceRef.current = es
-  }
+            if (event.type === 'complete' || event.type === 'error') {
+              setIsStreaming(false)
+              streamCompletedRef.current = true
+              setStreamCompleted(true)
+              setActiveUserMessageId(null)
+              setTimeout(() => {
+                if (eventSourceRef.current) {
+                  eventSourceRef.current.close()
+                  eventSourceRef.current = null
+                }
+              }, 500)
+            }
+          },
+          onError: (err) => {
+            if (streamCompletedRef.current) {
+              return
+            }
+
+            setIsStreaming(false)
+            setCurrentTool(null)
+            setErrorMessage(err || 'Connection lost')
+            setStreamStatus({ phase: 'error', message: err || 'Connection lost' })
+            setActiveUserMessageId(null)
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.streaming ? { ...m, streaming: false, content: `${m.content}\n${err}` } : m
+              )
+            )
+            toast({
+              title: 'Connection lost',
+              description: err || 'Check the API URL and server status.',
+              status: 'error',
+              duration: 4000,
+              isClosable: true,
+            })
+          },
+        },
+        currentSession.id
+      )
+
+      eventSourceRef.current = es
+    },
+    [
+      input,
+      isStreaming,
+      currentSession,
+      addMessage,
+      generateTitleIfNeeded,
+      toast,
+    ]
+  )
 
   const handleStop = () => {
     if (eventSourceRef.current) {
@@ -254,7 +360,7 @@ export default function Home() {
       eventSourceRef.current = null
     }
     setIsStreaming(false)
-    setStreamCompleted(true) // Mark as completed to prevent error popup
+    setStreamCompleted(true)
     setStreamStatus(null)
     setToolHistory([])
     setCurrentTool(null)
@@ -265,152 +371,163 @@ export default function Home() {
     setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)))
   }
 
-  const guidance = useMemo(
-    () => ({
-      api: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api',
-    }),
-    []
-  )
-
   return (
-    <Container maxW="5xl" py={{ base: 6, md: 10 }}>
-      <Stack spacing={6}>
-        <Card borderColor="blackAlpha.100">
-          <CardBody>
-            <Stack spacing={3} direction={{ base: 'column', md: 'row' }} justify="space-between" align="start">
-              <Box>
-                <Heading size="lg">FDA Explorer</Heading>
-                <Text color={subtitleColor}>Ask questions about device events, recalls, and approvals.</Text>
-              </Box>
-              <HStack spacing={3}>
-                <Tag colorScheme={isStreaming ? 'green' : 'gray'} variant="subtle">
-                  API: {guidance.api}
-                </Tag>
-                {sessionTokens > 0 && (
-                  <Tag size="sm" variant="subtle" colorScheme={sessionTokens > TOKEN_WARNING_THRESHOLD ? 'orange' : 'gray'}>
+    <Box h="100%" display="flex" flexDirection="column" overflow="hidden">
+      <Card borderRadius={0} borderBottomWidth="1px" flexShrink={0}>
+        <CardBody py={3}>
+          <Stack spacing={2} direction={{ base: 'column', md: 'row' }} justify="space-between" align="center">
+            <Box>
+              <Heading size="md">OpenFDA Explorer</Heading>
+              <Text fontSize="sm" color={subtitleColor}>
+                {currentSession?.title || 'New Chat'}
+              </Text>
+            </Box>
+            <HStack spacing={2}>
+              {sessionTokens > 0 && (
+                <Tooltip
+                  label="Tokens measure conversation length. As tokens increase, the AI must process more context, which can reduce accuracy and increase response time. Start a new chat for fresh, focused responses."
+                  hasArrow
+                  maxW="280px"
+                  placement="bottom"
+                >
+                  <Tag
+                    size="sm"
+                    variant="subtle"
+                    colorScheme={sessionTokens > TOKEN_WARNING_THRESHOLD ? 'orange' : 'gray'}
+                    cursor="help"
+                  >
                     {Math.round(sessionTokens / 1000)}k tokens
                   </Tag>
-                )}
-                <Tooltip label="Start new conversation">
-                  <IconButton
-                    aria-label="New chat"
-                    icon={<AddIcon />}
-                    onClick={handleNewChat}
-                    variant="ghost"
-                    size="sm"
-                  />
-                </Tooltip>
-                <IconButton
-                  aria-label="Toggle color mode"
-                  icon={colorMode === 'light' ? <MoonIcon /> : <SunIcon />}
-                  onClick={toggleColorMode}
-                  variant="ghost"
-                  size="sm"
-                />
-              </HStack>
-            </Stack>
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader pb={2}>
-            <HStack justify="space-between">
-              <Text fontWeight="600" color={sectionLabelColor}>
-                Chat
-              </Text>
-              {isStreaming && (
-                <Tooltip label="Stop streaming">
-                  <IconButton aria-label="Stop" icon={<CloseIcon boxSize={3} />} size="sm" onClick={handleStop} />
                 </Tooltip>
               )}
+              <IconButton
+                aria-label="Toggle color mode"
+                icon={colorMode === 'light' ? <MoonIcon /> : <SunIcon />}
+                onClick={toggleColorMode}
+                variant="ghost"
+                size="sm"
+              />
             </HStack>
-          </CardHeader>
-          <CardBody pt={0}>
-            <Stack spacing={4}>
-              <VStack align="stretch" spacing={4} maxH="60vh" overflowY="auto" pr={1}>
-                {messages.map((m) => (
-                  <Box key={m.id}>
-                    <MessageBubble message={m} />
-                    {m.id === activeUserMessageId && streamStatus && (
-                      <ThinkingPanel
-                        isStreaming={isStreaming}
-                        streamSeconds={streamSeconds}
-                        phase={streamStatus.phase}
-                        errorMessage={errorMessage}
-                        toolHistory={toolHistory}
-                        currentTool={currentTool}
-                        toolCallsDone={toolCallsDone}
-                        toolCallsTotal={toolCallsTotal}
-                      />
-                    )}
-                  </Box>
-                ))}
-                <div ref={endOfChatRef} />
-              </VStack>
+          </Stack>
+        </CardBody>
+      </Card>
 
-              {sessionTokens > TOKEN_LIMIT && (
-                <Alert status="error" borderRadius="md">
-                  <AlertIcon />
-                  <Box flex="1">
-                    <Text fontWeight="600">Token limit reached</Text>
-                    <Text fontSize="sm">Please start a new chat to continue.</Text>
-                  </Box>
-                  <Button size="sm" colorScheme="red" onClick={handleNewChat}>
-                    New Chat
-                  </Button>
-                </Alert>
-              )}
+      <VStack flex="1" align="stretch" spacing={4} p={4} overflowY="auto">
+        {messages.map((m) => (
+          <Box key={m.id}>
+            <MessageBubble message={m} />
+            {m.id === activeUserMessageId && streamStatus && (
+              <ThinkingPanel
+                isStreaming={isStreaming}
+                streamSeconds={streamSeconds}
+                phase={streamStatus.phase}
+                errorMessage={errorMessage}
+                toolHistory={toolHistory}
+                currentTool={currentTool}
+                toolCallsDone={toolCallsDone}
+                toolCallsTotal={toolCallsTotal}
+              />
+            )}
+          </Box>
+        ))}
+        <div ref={endOfChatRef} />
+      </VStack>
 
-              {sessionTokens > TOKEN_WARNING_THRESHOLD && sessionTokens <= TOKEN_LIMIT && (
-                <Alert status="warning" borderRadius="md">
-                  <AlertIcon />
-                  <Box flex="1">
-                    <Text fontSize="sm">
-                      Conversation is getting long ({Math.round(sessionTokens / 1000)}k tokens).
-                      Consider starting a new chat soon.
-                    </Text>
-                  </Box>
-                  <Button size="sm" variant="outline" onClick={handleNewChat}>
-                    New Chat
-                  </Button>
-                </Alert>
-              )}
+      <Box p={4} borderTopWidth="1px" flexShrink={0}>
+        {sessionTokens > TOKEN_LIMIT && (
+          <Alert status="error" borderRadius="md" mb={3}>
+            <AlertIcon />
+            <Box flex="1">
+              <Text fontWeight="600">Token limit reached</Text>
+              <Text fontSize="sm">Please start a new chat to continue.</Text>
+            </Box>
+            <Button size="sm" colorScheme="red" onClick={handleNewChat}>
+              New Chat
+            </Button>
+          </Alert>
+        )}
 
-              <Stack direction={{ base: 'column', md: 'row' }} spacing={3}>
-                <Textarea
-                  placeholder={sessionTokens > TOKEN_LIMIT ? 'Token limit reached - start new chat' : 'Ask about a device, manufacturer, or risk signal...'}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  isDisabled={isStreaming || sessionTokens > TOKEN_LIMIT}
-                  rows={3}
-                />
-                <Button
-                  colorScheme="brand"
-                  onClick={() => handleSend()}
-                  isDisabled={!canSend}
-                  minW={{ md: '120px' }}
-                >
-                  {isStreaming ? 'Streaming...' : 'Send'}
-                </Button>
-              </Stack>
+        {sessionTokens > TOKEN_WARNING_THRESHOLD && sessionTokens <= TOKEN_LIMIT && (
+          <Alert status="warning" borderRadius="md" mb={3}>
+            <AlertIcon />
+            <Box flex="1">
+              <Text fontSize="sm">
+                Conversation is getting long ({Math.round(sessionTokens / 1000)}k tokens). Consider starting a new
+                chat soon.
+              </Text>
+            </Box>
+            <Button size="sm" variant="outline" onClick={handleNewChat}>
+              New Chat
+            </Button>
+          </Alert>
+        )}
 
-              <HStack spacing={2} wrap="wrap">
-                {starterPrompts.map((p) => (
-                  <Button key={p} size="sm" variant="outline" onClick={() => handleSend(p)} isDisabled={isStreaming}>
-                    {p}
-                  </Button>
-                ))}
+        <Stack direction={{ base: 'column', md: 'row' }} spacing={3} align="stretch">
+          <Textarea
+            placeholder={
+              sessionTokens > TOKEN_LIMIT
+                ? 'Token limit reached - start new chat'
+                : 'Ask about a device, manufacturer, or risk signal...'
+            }
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && canSend) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            isDisabled={isStreaming || sessionTokens > TOKEN_LIMIT}
+            rows={2}
+            resize="none"
+          />
+          <Button
+            colorScheme="brand"
+            onClick={isStreaming ? handleStop : () => handleSend()}
+            isDisabled={!canSend && !isStreaming}
+            minW={{ md: '100px' }}
+          >
+            {isStreaming ? (
+              <HStack spacing={2}>
+                <Spinner size="sm" />
+                <Text>Stop</Text>
               </HStack>
-            </Stack>
-          </CardBody>
-        </Card>
-      </Stack>
-    </Container>
+            ) : (
+              'Send'
+            )}
+          </Button>
+        </Stack>
+
+        {messages.length === 1 && (
+          <Box mt={3}>
+            <Text fontSize="xs" color="gray.500" mb={2}>
+              Try asking:
+            </Text>
+            <HStack spacing={2} wrap="wrap">
+              {starterPrompts.map((p) => (
+                <Button key={p} size="xs" variant="outline" onClick={() => handleSend(p)} isDisabled={isStreaming}>
+                  {p}
+                </Button>
+              ))}
+            </HStack>
+          </Box>
+        )}
+      </Box>
+    </Box>
   )
 }
 
 function formatToolName(tool: string): string {
-  return tool.replace(/_/g, ' ').replace(/^search /, '')
+  const toolDescriptions: Record<string, string> = {
+    resolve_device: 'resolve device',
+    search_maude: 'searching adverse events',
+    search_recalls: 'searching recalls',
+    search_510k: 'searching 510(k)',
+    search_pma: 'searching PMA',
+    search_registrations: 'searching registrations',
+    search_classifications: 'searching classifications',
+  }
+  return toolDescriptions[tool] || tool.replace(/_/g, ' ').replace(/^search /, '')
 }
 
 function ThinkingPanel({
@@ -446,7 +563,6 @@ function ThinkingPanel({
   const currentToolColor = useColorModeValue('orange.600', 'orange.300')
   const progressBarBg = useColorModeValue('orange.100', 'orange.800')
 
-  // Completed state - minimal single line
   if (!isStreaming && phase === 'final') {
     return (
       <HStack
@@ -467,7 +583,6 @@ function ThinkingPanel({
     )
   }
 
-  // Error state
   if (phase === 'error') {
     return (
       <Box mt={3} px={3} py={2} bg={errorBg} borderWidth="1px" borderColor={errorBorder} borderRadius="lg">
@@ -486,17 +601,8 @@ function ThinkingPanel({
     )
   }
 
-  // Streaming state - breadcrumb layout
   return (
-    <Box
-      mt={3}
-      px={4}
-      py={3}
-      bg={streamingBg}
-      borderRadius="xl"
-      borderWidth="1px"
-      borderColor={streamingBorder}
-    >
+    <Box mt={3} px={4} py={3} bg={streamingBg} borderRadius="xl" borderWidth="1px" borderColor={streamingBorder}>
       <HStack justify="space-between">
         <HStack spacing={2}>
           <Spinner size="sm" color="orange.500" />
@@ -509,9 +615,8 @@ function ThinkingPanel({
         </Tag>
       </HStack>
 
-      {/* Breadcrumb trail */}
       {(toolHistory.length > 0 || currentTool) && (
-        <HStack mt={2} spacing={1} flexWrap="wrap" fontSize="xs">
+        <HStack mt={2} spacing={1} flexWrap="wrap" fontSize="sm">
           {toolHistory.map((tool, i) => (
             <Fragment key={i}>
               <Text color={breadcrumbColor}>{formatToolName(tool)}</Text>
@@ -519,14 +624,13 @@ function ThinkingPanel({
             </Fragment>
           ))}
           {currentTool && (
-            <Text fontWeight="600" color={currentToolColor}>
-              [{formatToolName(currentTool)}...]
+            <Text fontWeight="700" fontSize="md" color={currentToolColor}>
+              {formatToolName(currentTool)}
             </Text>
           )}
         </HStack>
       )}
 
-      {/* Progress bar */}
       {toolCallsTotal > 0 && (
         <Box mt={2}>
           <Text fontSize="xs" color={breadcrumbColor} mb={1}>
@@ -543,15 +647,18 @@ function ThinkingPanel({
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
+  const isSystem = message.role === 'system'
   const userBg = useColorModeValue('brand.50', 'brand.900')
   const assistantBg = useColorModeValue('white', 'gray.700')
+  const systemBg = useColorModeValue('gray.50', 'gray.750')
   const userBorder = useColorModeValue('brand.100', 'brand.700')
   const assistantBorder = useColorModeValue('gray.100', 'gray.600')
+  const systemBorder = useColorModeValue('brand.200', 'brand.600')
   const contentColor = useColorModeValue('gray.800', 'gray.100')
   const strongColor = useColorModeValue('gray.900', 'white')
   const codeBackground = useColorModeValue('orange.50', 'whiteAlpha.200')
-  const bg = isUser ? userBg : assistantBg
-  const border = isUser ? userBorder : assistantBorder
+  const bg = isUser ? userBg : isSystem ? systemBg : assistantBg
+  const border = isUser ? userBorder : isSystem ? systemBorder : assistantBorder
 
   return (
     <Box
@@ -560,14 +667,16 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       bg={bg}
       borderColor={border}
       borderWidth="1px"
+      borderLeftWidth={isSystem ? '3px' : '1px'}
+      borderLeftColor={isSystem ? 'brand.400' : border}
       borderRadius="xl"
       px={4}
       py={3}
       shadow="sm"
     >
       <HStack justify="space-between" mb={2}>
-        <Tag size="sm" colorScheme={isUser ? 'brand' : 'gray'}>
-          {isUser ? 'You' : message.role === 'system' ? 'System' : 'FDA Agent'}
+        <Tag size="xs" variant="subtle" colorScheme={isUser ? 'brand' : 'gray'}>
+          {isUser ? 'You' : isSystem ? 'System' : 'FDA Agent'}
         </Tag>
         {message.streaming && <Spinner size="sm" color="brand.500" />}
       </HStack>
@@ -591,9 +700,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           h3: { fontSize: '1rem', fontWeight: 700, marginBottom: 2 },
         }}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {message.content || '...'}
-        </ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || '...'}</ReactMarkdown>
         {!isUser && message.role !== 'system' && message.streaming && (
           <Box
             as="span"
