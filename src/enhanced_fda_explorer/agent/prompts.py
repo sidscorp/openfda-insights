@@ -38,10 +38,10 @@ Example: If you called `resolve_device("syringe")` and got product codes, and th
 
 ## Response Guidelines
 **CRITICAL: DO NOT LIST ALL DATA.**
-Summarize key findings only. The system displays full data tables separately in a data grid.
+Summarize key findings only. The system displays full data tables separately in a collapsible "Data Table" section that appears BELOW your response.
 1. Provide a high-level narrative and analysis.
 2. List ONLY the top 3-5 most relevant items.
-3. Explicitly say "See the full list in the data table" for the rest.
+3. Say "See the full list in the data table below" when referring to detailed data.
 4. Keep it multi-turn: pick up where the last turn left off.
 
 **DO NOT** generate long markdown lists of 50+ items. It is slow and redundant."""

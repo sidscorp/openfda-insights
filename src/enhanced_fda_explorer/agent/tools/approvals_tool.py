@@ -1,12 +1,20 @@
 """
 PMA Approvals Tool - Search FDA Premarket Approval (PMA) database.
 """
-from typing import Type, Optional
+import asyncio
+from typing import Type, Optional, Callable, Dict, Any
 from collections import Counter
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from ...openfda_client import OpenFDAClient
+from ...openfda_client import OpenFDAClient, HybridAggregationResult
+
+PMA_SERVER_FIELDS = ["advisory_committee_description.exact", "decision_code.exact"]
+PMA_CLIENT_EXTRACTORS: Dict[str, Callable[[Dict[str, Any]], Optional[str]]] = {
+    "decision_code": lambda p: p.get("decision_code"),
+    "advisory_committee": lambda p: p.get("advisory_committee_description"),
+    "applicant": lambda p: p.get("applicant"),
+}
 
 
 class SearchPMAInput(BaseModel):
@@ -48,58 +56,83 @@ class SearchPMATool(BaseTool):
         return " AND ".join(search_parts)
 
     def _run(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
-        try:
-            search = self._build_search(query, date_from, date_to)
-            data = self._client.get(
-                "device/pma.json",
-                params={"search": search, "limit": min(limit, 100)},
-                sort="decision_date:desc"
-            )
-            return self._format_results(query, data)
-        except Exception as e:
-            if "404" in str(e) or "No results" in str(e):
-                return f"No PMA approvals found for '{query}'."
-            return f"Error searching PMA approvals: {str(e)}"
+        return asyncio.run(self._arun(query, date_from, date_to, limit))
 
-    def _format_results(self, query: str, data: dict) -> str:
+    def _format_results(
+        self,
+        query: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> str:
         results = data.get("results", []) or []
-        total = data.get("meta", {}).get("results", {}).get("total", 0)
+        total = hybrid_result.total_available if hybrid_result else data.get("meta", {}).get("results", {}).get("total", 0)
+        aggregations = hybrid_result.aggregations if hybrid_result else {}
 
         if not results:
             return f"No PMA approvals found for '{query}'."
 
-        lines = [f"Found {total} PMA records for '{query}' (showing {len(results)}):\n"]
+        agg_label = hybrid_result.get_label() if hybrid_result else "sample only"
+        lines = [f"Found {total} PMA records for '{query}'. Statistics from {agg_label}. Showing {len(results)} most recent:\n"]
 
-        applicants = Counter()
-        decisions = Counter()
+        decision_codes = {
+            "APPR": "Approved",
+            "APCM": "Approved with Conditions",
+            "DENY": "Denied",
+            "WTDR": "Withdrawn"
+        }
+
+        decision_key = next(
+            (k for k in ["decision_code.exact", "decision_code"] if k in aggregations),
+            None,
+        )
+        if decision_key:
+            lines.append(f"DECISION TYPES ({agg_label}):")
+            for item in aggregations[decision_key]:
+                desc = decision_codes.get(item["term"], item["term"])
+                lines.append(f"  {desc}: {item['count']}")
+        else:
+            decisions: Counter = Counter()
+            for pma in results:
+                decision = pma.get("decision_code", "Unknown")
+                decisions[decision] += 1
+            lines.append("DECISION TYPES (sample only):")
+            for decision, count in decisions.most_common():
+                desc = decision_codes.get(decision, decision)
+                lines.append(f"  {desc}: {count}")
+
+        committee_key = next(
+            (k for k in ["advisory_committee_description.exact", "advisory_committee"] if k in aggregations),
+            None,
+        )
+        if committee_key:
+            committee_items = aggregations[committee_key][:5]
+            if committee_items:
+                lines.append(f"\nADVISORY COMMITTEES ({agg_label}):")
+                for item in committee_items:
+                    lines.append(f"  {item['term']}: {item['count']}")
+
         supplements = 0
-
         for pma in results:
-            applicant = pma.get("applicant", "Unknown")
-            applicants[applicant] += 1
-
-            decision = pma.get("decision_code", "Unknown")
-            decisions[decision] += 1
-
             supplements += len(pma.get("supplements", []))
-
-        lines.append("DECISION TYPES:")
-        for decision, count in decisions.most_common():
-            desc = {
-                "APPR": "Approved",
-                "APCM": "Approved with Conditions",
-                "DENY": "Denied",
-                "WTDR": "Withdrawn"
-            }.get(decision, decision)
-            lines.append(f"  {desc}: {count}")
-
         if supplements > 0:
-            lines.append(f"\nTotal supplements filed: {supplements}")
+            lines.append(f"\nTotal supplements filed (sample): {supplements}")
 
-        if len(applicants) > 1:
-            lines.append("\nTOP APPLICANTS:")
-            for applicant, count in applicants.most_common(5):
-                lines.append(f"  {applicant}: {count}")
+        applicant_key = "applicant" if "applicant" in aggregations else None
+        if applicant_key:
+            applicant_items = aggregations[applicant_key][:5]
+            if len(applicant_items) > 1:
+                lines.append(f"\nTOP APPLICANTS ({agg_label}):")
+                for item in applicant_items:
+                    lines.append(f"  {item['term']}: {item['count']}")
+        else:
+            applicants: Counter = Counter()
+            for pma in results:
+                applicant = pma.get("applicant", "Unknown")
+                applicants[applicant] += 1
+            if len(applicants) > 1:
+                lines.append("\nTOP APPLICANTS (sample):")
+                for applicant, count in applicants.most_common(5):
+                    lines.append(f"  {applicant}: {count}")
 
         lines.append("\nRECENT PMA RECORDS:")
         for i, pma in enumerate(results[:5], 1):
@@ -122,14 +155,26 @@ class SearchPMATool(BaseTool):
         return "\n".join(lines)
 
     async def _arun(self, query: str, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
+        """Async version using httpx for non-blocking HTTP calls with hybrid aggregation."""
         try:
             search = self._build_search(query, date_from, date_to)
+            endpoint = "device/pma.json"
+
+            hybrid_result = await self._client.aget_hybrid_aggregations(
+                endpoint=endpoint,
+                search=search,
+                server_count_fields=PMA_SERVER_FIELDS,
+                client_field_extractors=PMA_CLIENT_EXTRACTORS,
+                max_client_records=5000,
+            )
+
             data = await self._client.aget(
-                "device/pma.json",
+                endpoint,
                 params={"search": search, "limit": min(limit, 100)},
                 sort="decision_date:desc"
             )
-            return self._format_results(query, data)
+
+            return self._format_results(query, data, hybrid_result)
         except Exception as e:
             if "404" in str(e) or "No results" in str(e):
                 return f"No PMA approvals found for '{query}'."

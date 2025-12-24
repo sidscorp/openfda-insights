@@ -1,14 +1,21 @@
 """
 Events Tool - Search FDA adverse event reports (MAUDE database).
 """
-from typing import Type, Optional
+import asyncio
+from typing import Type, Optional, Callable, Dict, Any
 from collections import Counter
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 import re
 
-from ...openfda_client import OpenFDAClient
-from ...models.responses import EventSearchResult, AdverseEventRecord
+from ...openfda_client import OpenFDAClient, HybridAggregationResult
+from ...models.responses import EventSearchResult, AdverseEventRecord, AggregationCount
+
+EVENTS_SERVER_FIELDS = ["event_type.exact", "device.manufacturer_d_name.exact"]
+EVENTS_CLIENT_EXTRACTORS: Dict[str, Callable[[Dict[str, Any]], Optional[str]]] = {
+    "event_type": lambda e: e.get("event_type"),
+    "manufacturer": lambda e: (e.get("device", [{}])[0] or {}).get("manufacturer_d_name"),
+}
 
 COUNTRY_CODES = {
     "united states": "US", "usa": "US", "us": "US", "america": "US",
@@ -86,70 +93,77 @@ class SearchEventsTool(BaseTool):
         return country
 
     def _run(self, query: str = "", product_codes: list[str] = None, date_from: str = "", date_to: str = "", limit: int = 100, country: str = "") -> str:
-        try:
-            search = self._build_search(query, product_codes or [], country, date_from, date_to)
-            data = self._client.get_paginated(
-                "device/event.json",
-                params={"search": search},
-                limit=min(limit, 500),
-                sort="date_received:desc",
-            )
-            search_desc = query or (", ".join(product_codes) if product_codes else "") or country
-            self._last_structured_result = self._to_structured(search_desc, date_from, date_to, data)
-            return self._format_results(search_desc, data)
+        return asyncio.run(self._arun(query, product_codes, date_from, date_to, limit, country))
 
-        except ValueError as e:
-            self._last_structured_result = None
-            return f"Error: {e}"
-        except Exception as e:
-            self._last_structured_result = None
-            return f"Error searching events: {str(e)}"
-
-    def _format_results(self, query: str, data: dict) -> str:
+    def _format_results(
+        self,
+        query: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> str:
         results = data.get("results", []) or []
-        total = data.get("meta", {}).get("results", {}).get("total", 0)
+        total = hybrid_result.total_available if hybrid_result else data.get("meta", {}).get("results", {}).get("total", 0)
+        aggregations = hybrid_result.aggregations if hybrid_result else {}
 
         if not results:
             return f"No adverse events found for '{query}'."
 
-        lines = [f"Found {total} adverse events for '{query}' (showing {len(results)}):\n"]
+        agg_label = hybrid_result.get_label() if hybrid_result else "sample only"
+        lines = [f"Found {total} adverse events for '{query}'. Statistics from {agg_label}. Showing {len(results)} most recent:\n"]
 
-        event_types = Counter()
-        outcomes = Counter()
-        problems = Counter()
+        event_type_key = next(
+            (k for k in ["event_type.exact", "event_type"] if k in aggregations),
+            None,
+        )
+        if event_type_key:
+            lines.append(f"EVENT TYPES ({agg_label}):")
+            for item in aggregations[event_type_key][:5]:
+                lines.append(f"  {item['term']}: {item['count']}")
+        else:
+            event_types: Counter = Counter()
+            for event in results:
+                event_type = event.get("event_type", "Unknown")
+                event_types[event_type] += 1
+            lines.append("EVENT TYPES (sample only):")
+            for etype, count in event_types.most_common(5):
+                lines.append(f"  {etype}: {count}")
 
+        outcomes: Counter = Counter()
+        problems: Counter = Counter()
         for event in results:
-            event_type = event.get("event_type", "Unknown")
-            event_types[event_type] += 1
-
             for patient in event.get("patient", []):
                 outcome = patient.get("patient_problems", ["Unknown"])
                 if isinstance(outcome, list):
                     for o in outcome:
                         outcomes[o] += 1
-
             for device in event.get("device", []):
                 for problem in device.get("device_problem_text", []):
                     if problem:
                         problems[problem[:50]] += 1
 
-        lines.append("EVENT TYPES:")
-        for etype, count in event_types.most_common(5):
-            lines.append(f"  {etype}: {count}")
-
         if outcomes:
-            lines.append("\nPATIENT OUTCOMES:")
+            lines.append("\nPATIENT OUTCOMES (sample):")
             for outcome, count in outcomes.most_common(5):
                 lines.append(f"  {outcome}: {count}")
 
         if problems:
-            lines.append("\nDEVICE PROBLEMS:")
+            lines.append("\nDEVICE PROBLEMS (sample):")
             for problem, count in problems.most_common(5):
                 lines.append(f"  {problem}: {count}")
 
+        mfr_key = next(
+            (k for k in ["device.manufacturer_d_name.exact", "manufacturer"] if k in aggregations),
+            None,
+        )
+        if mfr_key:
+            mfr_items = aggregations[mfr_key][:5]
+            if mfr_items:
+                lines.append(f"\nTOP MANUFACTURERS ({agg_label}):")
+                for item in mfr_items:
+                    lines.append(f"  {item['term']}: {item['count']}")
+
         lines.append("\nRECENT EVENTS:")
-        # Show all fetched results; upstream pagination already respects the requested limit.
-        for i, event in enumerate(results, 1):
+        for i, event in enumerate(results[:10], 1):
             date = event.get("date_received", "Unknown")
             event_type = event.get("event_type", "Unknown")
             devices = event.get("device", [])
@@ -162,13 +176,21 @@ class SearchEventsTool(BaseTool):
 
         return "\n".join(lines)
 
-    def _to_structured(self, query: str, date_from: str, date_to: str, data: dict) -> EventSearchResult:
+    def _to_structured(
+        self,
+        query: str,
+        date_from: str,
+        date_to: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> EventSearchResult:
         results = data.get("results", []) or []
         total = data.get("meta", {}).get("results", {}).get("total", 0)
+        aggregations = hybrid_result.aggregations if hybrid_result else {}
 
         records = []
-        event_type_counts = Counter()
-        manufacturer_counts = Counter()
+        event_type_counts: Counter = Counter()
+        manufacturer_counts: Counter = Counter()
 
         for event in results:
             event_type = event.get("event_type", "Unknown")
@@ -191,29 +213,54 @@ class SearchEventsTool(BaseTool):
                 product_code=product_code,
             ))
 
+        agg_data = {}
+        for field, raw_counts in aggregations.items():
+            agg_data[field] = [AggregationCount(term=item["term"], count=item["count"]) for item in raw_counts]
+
+        if aggregations:
+            if "event_type.exact" in aggregations:
+                event_type_counts = Counter({item["term"]: item["count"] for item in aggregations["event_type.exact"]})
+            if "event_type" in aggregations:
+                event_type_counts = Counter({item["term"]: item["count"] for item in aggregations["event_type"]})
+            if "device.manufacturer_d_name.exact" in aggregations:
+                manufacturer_counts = Counter({item["term"]: item["count"] for item in aggregations["device.manufacturer_d_name.exact"]})
+            if "manufacturer" in aggregations:
+                manufacturer_counts = Counter({item["term"]: item["count"] for item in aggregations["manufacturer"]})
+
         return EventSearchResult(
             query=query,
             date_from=date_from or None,
             date_to=date_to or None,
             total_found=total,
             records=records,
+            aggregations=agg_data,
             event_type_counts=dict(event_type_counts),
             manufacturer_counts=dict(manufacturer_counts)
         )
 
     async def _arun(self, query: str = "", product_codes: list[str] = None, date_from: str = "", date_to: str = "", limit: int = 100, country: str = "") -> str:
-        """Async version using httpx for non-blocking HTTP calls."""
+        """Async version using httpx for non-blocking HTTP calls with hybrid aggregation."""
         try:
             search = self._build_search(query, product_codes or [], country, date_from, date_to)
-            data = await self._client.aget_paginated(
-                "device/event.json",
-                params={"search": search},
-                limit=min(limit, 500),
+            endpoint = "device/event.json"
+
+            hybrid_result = await self._client.aget_hybrid_aggregations(
+                endpoint=endpoint,
+                search=search,
+                server_count_fields=EVENTS_SERVER_FIELDS,
+                client_field_extractors=EVENTS_CLIENT_EXTRACTORS,
+                max_client_records=5000,
+            )
+
+            data = await self._client.aget(
+                endpoint,
+                params={"search": search, "limit": min(limit, 100)},
                 sort="date_received:desc",
             )
+
             search_desc = (", ".join(product_codes) if product_codes else "") or query or country
-            self._last_structured_result = self._to_structured(search_desc, date_from, date_to, data)
-            return self._format_results(search_desc, data)
+            self._last_structured_result = self._to_structured(search_desc, date_from, date_to, data, hybrid_result)
+            return self._format_results(search_desc, data, hybrid_result)
 
         except ValueError as e:
             self._last_structured_result = None

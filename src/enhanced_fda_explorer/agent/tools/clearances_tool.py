@@ -1,12 +1,20 @@
 """
 510(k) Clearances Tool - Search FDA 510(k) premarket notifications.
 """
-from typing import Type, Optional
+import asyncio
+from typing import Type, Optional, Callable, Dict, Any
 from collections import Counter
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from ...openfda_client import OpenFDAClient
+from ...openfda_client import OpenFDAClient, HybridAggregationResult
+
+CLEARANCES_SERVER_FIELDS = ["advisory_committee_description.exact", "decision.exact"]
+CLEARANCES_CLIENT_EXTRACTORS: Dict[str, Callable[[Dict[str, Any]], Optional[str]]] = {
+    "decision": lambda c: c.get("decision_description") or c.get("decision_code"),
+    "advisory_committee": lambda c: c.get("advisory_committee_description"),
+    "applicant": lambda c: c.get("applicant"),
+}
 
 
 class Search510kInput(BaseModel):
@@ -69,53 +77,68 @@ class Search510kTool(BaseTool):
         return " AND ".join(search_parts)
 
     def _run(self, query: str = "", product_codes: list[str] = None, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
-        try:
-            search = self._build_search(query, product_codes or [], date_from, date_to)
-            data = self._client.get(
-                "device/510k.json",
-                params={"search": search, "limit": min(limit, 100)},
-                sort="decision_date:desc"
-            )
-            return self._format_results(query, data)
-        except ValueError as e:
-            return str(e)
-        except Exception as e:
-            if "404" in str(e) or "No results" in str(e):
-                return f"No 510(k) clearances found for '{query}'."
-            return f"Error searching 510(k) clearances: {str(e)}"
+        return asyncio.run(self._arun(query, product_codes, date_from, date_to, limit))
 
-    def _format_results(self, query: str, data: dict) -> str:
+    def _format_results(
+        self,
+        query: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> str:
         results = data.get("results", []) or []
-        total = data.get("meta", {}).get("results", {}).get("total", 0)
+        total = hybrid_result.total_available if hybrid_result else data.get("meta", {}).get("results", {}).get("total", 0)
+        aggregations = hybrid_result.aggregations if hybrid_result else {}
 
         if not results:
             return f"No 510(k) clearances found for '{query}'."
 
-        lines = [f"Found {total} 510(k) clearances for '{query}' (showing {len(results)}):\n"]
+        agg_label = hybrid_result.get_label() if hybrid_result else "sample only"
+        lines = [f"Found {total} 510(k) clearances for '{query}'. Statistics from {agg_label}. Showing {len(results)} most recent:\n"]
 
-        applicants = Counter()
-        decisions = Counter()
-        product_codes_counter = Counter()
+        decision_key = next(
+            (k for k in ["decision.exact", "decision"] if k in aggregations),
+            None,
+        )
+        if decision_key:
+            lines.append(f"DECISION OUTCOMES ({agg_label}):")
+            for item in aggregations[decision_key][:10]:
+                lines.append(f"  {item['term']}: {item['count']}")
+        else:
+            decisions: Counter = Counter()
+            for clearance in results:
+                decision = clearance.get("decision_description", clearance.get("decision_code", "Unknown"))
+                decisions[decision] += 1
+            lines.append("DECISION OUTCOMES (sample only):")
+            for decision, count in decisions.most_common():
+                lines.append(f"  {decision}: {count}")
 
-        for clearance in results:
-            applicant = clearance.get("applicant", "Unknown")
-            applicants[applicant] += 1
+        committee_key = next(
+            (k for k in ["advisory_committee_description.exact", "advisory_committee"] if k in aggregations),
+            None,
+        )
+        if committee_key:
+            committee_items = aggregations[committee_key][:5]
+            if committee_items:
+                lines.append(f"\nADVISORY COMMITTEES ({agg_label}):")
+                for item in committee_items:
+                    lines.append(f"  {item['term']}: {item['count']}")
 
-            decision = clearance.get("decision_description", clearance.get("decision_code", "Unknown"))
-            decisions[decision] += 1
-
-            openfda = clearance.get("openfda", {})
-            for code in openfda.get("device_name", []):
-                product_codes_counter[code] += 1
-
-        lines.append("DECISION OUTCOMES:")
-        for decision, count in decisions.most_common():
-            lines.append(f"  {decision}: {count}")
-
-        if len(applicants) > 1:
-            lines.append("\nTOP APPLICANTS:")
-            for applicant, count in applicants.most_common(5):
-                lines.append(f"  {applicant}: {count}")
+        applicant_key = "applicant" if "applicant" in aggregations else None
+        if applicant_key:
+            applicant_items = aggregations[applicant_key][:5]
+            if len(applicant_items) > 1:
+                lines.append(f"\nTOP APPLICANTS ({agg_label}):")
+                for item in applicant_items:
+                    lines.append(f"  {item['term']}: {item['count']}")
+        else:
+            applicants: Counter = Counter()
+            for clearance in results:
+                applicant = clearance.get("applicant", "Unknown")
+                applicants[applicant] += 1
+            if len(applicants) > 1:
+                lines.append("\nTOP APPLICANTS (sample):")
+                for applicant, count in applicants.most_common(5):
+                    lines.append(f"  {applicant}: {count}")
 
         lines.append("\nRECENT CLEARANCES:")
         for i, clearance in enumerate(results[:5], 1):
@@ -133,14 +156,26 @@ class Search510kTool(BaseTool):
         return "\n".join(lines)
 
     async def _arun(self, query: str = "", product_codes: list[str] = None, date_from: str = "", date_to: str = "", limit: int = 100) -> str:
+        """Async version using httpx for non-blocking HTTP calls with hybrid aggregation."""
         try:
             search = self._build_search(query, product_codes or [], date_from, date_to)
+            endpoint = "device/510k.json"
+
+            hybrid_result = await self._client.aget_hybrid_aggregations(
+                endpoint=endpoint,
+                search=search,
+                server_count_fields=CLEARANCES_SERVER_FIELDS,
+                client_field_extractors=CLEARANCES_CLIENT_EXTRACTORS,
+                max_client_records=5000,
+            )
+
             data = await self._client.aget(
-                "device/510k.json",
+                endpoint,
                 params={"search": search, "limit": min(limit, 100)},
                 sort="decision_date:desc"
             )
-            return self._format_results(query, data)
+
+            return self._format_results(query, data, hybrid_result)
         except ValueError as e:
             return str(e)
         except Exception as e:
