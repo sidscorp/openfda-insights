@@ -57,15 +57,24 @@ class RecallRecord(BaseModel):
     distribution_pattern: Optional[str] = None
 
 
+class AggregationCount(BaseModel):
+    term: str
+    count: int
+
+
 class RecallSearchResult(BaseModel):
     query: str
     date_from: Optional[str] = None
     date_to: Optional[str] = None
     total_found: int
     records: list[RecallRecord] = Field(default_factory=list)
-    class_counts: dict[str, int] = Field(default_factory=dict)
-    status_counts: dict[str, int] = Field(default_factory=dict)
-    firm_counts: dict[str, int] = Field(default_factory=dict)
+    aggregations: dict[str, list[AggregationCount]] = Field(
+        default_factory=dict,
+        description="Server-side aggregations from full dataset"
+    )
+    class_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+    status_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+    firm_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
 
 
 class AdverseEventRecord(BaseModel):
@@ -85,8 +94,12 @@ class EventSearchResult(BaseModel):
     date_to: Optional[str] = None
     total_found: int
     records: list[AdverseEventRecord] = Field(default_factory=list)
-    event_type_counts: dict[str, int] = Field(default_factory=dict)
-    manufacturer_counts: dict[str, int] = Field(default_factory=dict)
+    aggregations: dict[str, list[AggregationCount]] = Field(
+        default_factory=dict,
+        description="Server-side aggregations from full dataset"
+    )
+    event_type_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+    manufacturer_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
 
 
 class Clearance510kRecord(BaseModel):
@@ -104,8 +117,12 @@ class Clearance510kSearchResult(BaseModel):
     query: str
     total_found: int
     records: list[Clearance510kRecord] = Field(default_factory=list)
-    applicant_counts: dict[str, int] = Field(default_factory=dict)
-    product_code_counts: dict[str, int] = Field(default_factory=dict)
+    aggregations: dict[str, list[AggregationCount]] = Field(
+        default_factory=dict,
+        description="Server-side aggregations from full dataset"
+    )
+    applicant_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+    product_code_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
 
 
 class ClassificationRecord(BaseModel):
@@ -122,7 +139,11 @@ class ClassificationSearchResult(BaseModel):
     query: str
     total_found: int
     records: list[ClassificationRecord] = Field(default_factory=list)
-    class_counts: dict[str, int] = Field(default_factory=dict)
+    aggregations: dict[str, list[AggregationCount]] = Field(
+        default_factory=dict,
+        description="Server-side aggregations from full dataset"
+    )
+    class_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
 
 
 class LocationContext(BaseModel):
