@@ -3,12 +3,13 @@ FastAPI endpoints for FDA Intelligence Agent with SSE support
 """
 
 import json
+import os
 import time
 from collections import Counter
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -22,12 +23,25 @@ from .agent import FDAAgent, QueryRouter
 from .llm_factory import LLMFactory
 from .openfda_client import OpenFDAClient
 from .models.responses import AgentResponse as StructuredAgentResponse
+from .usage_tracker import get_usage_tracker, UsageTracker
 
 logger = logging.getLogger(__name__)
+
+USAGE_EXTEND_SECRET = os.environ.get("FDA_USAGE_EXTEND_SECRET", "changeme")
+USAGE_USER_PASSPHRASE = os.environ.get("FDA_USAGE_PASSPHRASE", "")
+USAGE_PASSPHRASE_EXTENSION = float(os.environ.get("FDA_USAGE_PASSPHRASE_EXTENSION", "5.0"))
 
 # Global instances
 router = QueryRouter()
 shared_checkpointer = MemorySaver()
+
+
+def get_client_ip(request: Request) -> str:
+    x_forwarded_for = request.headers.get("x-forwarded-for")
+    if x_forwarded_for:
+        return x_forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
 
 app = FastAPI(
     title="FDA Intelligence API",
@@ -42,6 +56,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def usage_limit_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/agent/") and not path.startswith("/api/agent/providers"):
+        try:
+            tracker = get_usage_tracker()
+            ip = get_client_ip(request)
+            allowed, used, limit = tracker.check_limit(ip)
+            if not allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "error": "usage_limit_exceeded",
+                        "used": round(used, 4),
+                        "limit": round(limit, 2),
+                        "message": "You have exceeded your usage limit. Contact the developer to extend your quota.",
+                        "contact": "Contact developer to extend limit"
+                    }
+                )
+        except Exception as e:
+            logger.warning(f"Usage check failed: {e}")
+    return await call_next(request)
 
 
 @app.get("/api/health")
@@ -417,12 +455,15 @@ async def agent_ask_get(
 
 @app.get("/api/agent/stream/{question}")
 async def agent_stream(
+    request: Request,
     question: str,
     provider: str = Query(default="openrouter"),
     model: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None)
 ):
     """Stream FDA agent responses using SSE with token-level streaming for final response."""
+    client_ip = get_client_ip(request)
+
     async def generate_events():
         try:
             allowed_tools = await router.route_async(question)
@@ -496,6 +537,19 @@ async def agent_stream(
                     (total_input_tokens / 1_000_000) * rates["input"] +
                     (total_output_tokens / 1_000_000) * rates["output"]
                 )
+
+            try:
+                tracker = get_usage_tracker()
+                tracker.record_usage(
+                    ip_address=client_ip,
+                    session_id=session_id,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    cost_usd=total_cost,
+                    model=used_model
+                )
+            except Exception as usage_err:
+                logger.warning(f"Failed to record usage: {usage_err}")
 
             complete_payload = {
                 "type": "complete",
@@ -1251,6 +1305,107 @@ async def list_providers():
         "providers": LLMFactory.list_providers(),
         "defaults": LLMFactory.PROVIDER_DEFAULTS
     }
+
+
+@app.get("/api/usage")
+async def get_usage(request: Request):
+    """Get usage statistics for the current IP address."""
+    try:
+        ip = get_client_ip(request)
+        tracker = get_usage_tracker()
+        stats = tracker.get_stats(ip)
+        return {
+            "ip_address": stats.ip_address,
+            "total_cost_usd": round(stats.total_cost_usd, 6),
+            "limit_usd": stats.limit_usd,
+            "remaining_usd": round(stats.limit_usd - stats.total_cost_usd, 6),
+            "total_input_tokens": stats.total_input_tokens,
+            "total_output_tokens": stats.total_output_tokens,
+            "request_count": stats.request_count,
+            "first_request": stats.first_request,
+            "last_request": stats.last_request,
+        }
+    except Exception as e:
+        logger.error(f"Usage stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ExtendLimitRequest(BaseModel):
+    ip_address: Optional[str] = Field(None, description="IP address to extend limit for (admin only)")
+    new_limit: Optional[float] = Field(None, description="New limit in USD (admin only)")
+    secret: Optional[str] = Field(None, description="Admin secret key")
+    passphrase: Optional[str] = Field(None, description="User passphrase for self-service extension")
+
+
+@app.post("/api/usage/extend")
+async def extend_usage_limit(request: ExtendLimitRequest, req: Request):
+    """Extend usage limit. Supports admin secret or user passphrase."""
+    tracker = get_usage_tracker()
+    client_ip = get_client_ip(req)
+
+    # Admin mode: requires secret, ip_address, and new_limit
+    if request.secret:
+        if request.secret != USAGE_EXTEND_SECRET:
+            raise HTTPException(status_code=403, detail="Invalid secret")
+        if not request.ip_address or not request.new_limit:
+            raise HTTPException(status_code=400, detail="Admin mode requires ip_address and new_limit")
+        try:
+            tracker.extend_limit(request.ip_address, request.new_limit, extended_by="admin")
+            return {
+                "success": True,
+                "ip_address": request.ip_address,
+                "new_limit": request.new_limit,
+            }
+        except Exception as e:
+            logger.error(f"Extend limit error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # User passphrase mode: extends own limit by configured amount
+    if request.passphrase:
+        if not USAGE_USER_PASSPHRASE:
+            raise HTTPException(status_code=403, detail="Passphrase extension not configured")
+        if request.passphrase != USAGE_USER_PASSPHRASE:
+            raise HTTPException(status_code=403, detail="Invalid passphrase")
+        try:
+            stats = tracker.get_stats(client_ip)
+            current_limit = stats.get("limit_usd", 1.50)
+            new_limit = current_limit + USAGE_PASSPHRASE_EXTENSION
+            tracker.extend_limit(client_ip, new_limit, extended_by="passphrase")
+            return {
+                "success": True,
+                "new_limit": new_limit,
+            }
+        except Exception as e:
+            logger.error(f"Passphrase extend error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    raise HTTPException(status_code=400, detail="Must provide either secret or passphrase")
+
+
+class GenerateTitleRequest(BaseModel):
+    first_user_message: str = Field(..., description="First user message in session")
+    first_assistant_response: str = Field(..., description="First assistant response")
+
+
+@app.post("/api/sessions/generate-title")
+async def generate_session_title(request: GenerateTitleRequest):
+    """Generate a short title for a session based on first exchange."""
+    try:
+        llm = LLMFactory.create(provider="openrouter", temperature=0.3, max_tokens=30)
+        prompt = f"""Generate a very short title (3-5 words, no quotes) summarizing this FDA research conversation:
+
+User: {request.first_user_message[:200]}
+Assistant: {request.first_assistant_response[:300]}
+
+Title:"""
+        response = llm.invoke(prompt)
+        title = response.content.strip().strip('"').strip("'")
+        if len(title) > 50:
+            title = title[:47] + "..."
+        return {"title": title}
+    except Exception as e:
+        logger.error(f"Title generation error: {e}")
+        return {"title": "New Chat"}
 
 
 if __name__ == "__main__":
