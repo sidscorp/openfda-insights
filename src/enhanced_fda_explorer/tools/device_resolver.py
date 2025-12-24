@@ -204,83 +204,104 @@ class DeviceResolver:
 
         return matches
 
-    def get_product_codes_fast(self, query: str, min_devices: int = 2, limit: int = 100, progress_callback=None) -> Dict[str, Any]:
+    def get_product_codes_fast(
+        self,
+        query: str | List[str],
+        min_devices: int = 2,
+        limit: int = 100,
+        progress_callback=None
+    ) -> Dict[str, Any]:
         """
         Layered search that runs all strategies and merges results.
         No short-circuiting - always searches all relevant fields.
+
+        Args:
+            query: Single search term or list of terms (for semantic expansion)
+            min_devices: Minimum devices per product code
+            limit: Maximum product codes to return
+            progress_callback: Optional callback for progress updates
         """
         if not self.conn:
             self.connect()
 
-        clean_query = query.strip()
+        queries = [query] if isinstance(query, str) else query
         results: Dict[str, Dict] = {}
 
         if progress_callback:
             progress_callback("Searching product codes...", 0)
 
-        # Layer 1: Exact product code match (instant, highest priority)
-        exact_code_res = self.conn.execute("""
-            SELECT
-                pc.product_code,
-                MAX(pc.product_code_name) as product_code_name,
-                COUNT(DISTINCT pc.device_key) as device_count
-            FROM product_codes pc
-            WHERE pc.product_code = ?
-            GROUP BY pc.product_code
-        """, [clean_query.upper()]).fetchall()
+        for q in queries:
+            clean_query = q.strip()
+            if not clean_query:
+                continue
 
-        for row in exact_code_res:
-            results[row[0]] = {
-                "code": row[0],
-                "name": row[1],
-                "device_count": row[2],
-                "match_type": "exact_code"
-            }
+            # Layer 1: Exact product code match (instant, highest priority)
+            exact_code_res = self.conn.execute("""
+                SELECT
+                    pc.product_code,
+                    MAX(pc.product_code_name) as product_code_name,
+                    COUNT(DISTINCT pc.device_key) as device_count
+                FROM product_codes pc
+                WHERE pc.product_code = ?
+                GROUP BY pc.product_code
+            """, [clean_query.upper()]).fetchall()
 
-        # Layer 2: Product code NAME contains (primary for device type searches)
-        name_match_res = self.conn.execute("""
-            SELECT
-                pc.product_code,
-                MAX(pc.product_code_name) as product_code_name,
-                COUNT(DISTINCT pc.device_key) as device_count
-            FROM product_codes pc
-            WHERE pc.product_code_name ILIKE ?
-            GROUP BY pc.product_code
-            ORDER BY device_count DESC
-            LIMIT ?
-        """, [f"%{clean_query}%", limit]).fetchall()
+            for row in exact_code_res:
+                if row[0] not in results:
+                    results[row[0]] = {
+                        "code": row[0],
+                        "name": row[1],
+                        "device_count": row[2],
+                        "match_type": "exact_code",
+                        "matched_term": clean_query
+                    }
 
-        for row in name_match_res:
-            if row[0] not in results:
-                results[row[0]] = {
-                    "code": row[0],
-                    "name": row[1],
-                    "device_count": row[2],
-                    "match_type": "name_contains"
-                }
+            # Layer 2: Product code NAME contains (primary for device type searches)
+            name_match_res = self.conn.execute("""
+                SELECT
+                    pc.product_code,
+                    MAX(pc.product_code_name) as product_code_name,
+                    COUNT(DISTINCT pc.device_key) as device_count
+                FROM product_codes pc
+                WHERE pc.product_code_name ILIKE ?
+                GROUP BY pc.product_code
+                ORDER BY device_count DESC
+                LIMIT ?
+            """, [f"%{clean_query}%", limit]).fetchall()
 
-        # Layer 3: Company/brand name contains (for manufacturer searches)
-        company_match_res = self.conn.execute("""
-            SELECT
-                pc.product_code,
-                MAX(pc.product_code_name) as product_code_name,
-                COUNT(DISTINCT d.public_device_record_key) as device_count
-            FROM devices d
-            JOIN product_codes pc ON d.public_device_record_key = pc.device_key
-            WHERE d.company_name ILIKE ? OR d.brand_name ILIKE ?
-            GROUP BY pc.product_code
-            ORDER BY device_count DESC
-            LIMIT ?
-        """, [f"%{clean_query}%", f"%{clean_query}%", limit]).fetchall()
+            for row in name_match_res:
+                if row[0] not in results:
+                    results[row[0]] = {
+                        "code": row[0],
+                        "name": row[1],
+                        "device_count": row[2],
+                        "match_type": "name_contains",
+                        "matched_term": clean_query
+                    }
 
-        for row in company_match_res:
-            if row[0] not in results:
-                results[row[0]] = {
-                    "code": row[0],
-                    "name": row[1],
-                    "device_count": row[2],
-                    "match_type": "company_brand"
-                }
+            # Layer 3: Company/brand name contains (for manufacturer searches)
+            company_match_res = self.conn.execute("""
+                SELECT
+                    pc.product_code,
+                    MAX(pc.product_code_name) as product_code_name,
+                    COUNT(DISTINCT d.public_device_record_key) as device_count
+                FROM devices d
+                JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+                WHERE d.company_name ILIKE ? OR d.brand_name ILIKE ?
+                GROUP BY pc.product_code
+                ORDER BY device_count DESC
+                LIMIT ?
+            """, [f"%{clean_query}%", f"%{clean_query}%", limit]).fetchall()
+
+            for row in company_match_res:
+                if row[0] not in results:
+                    results[row[0]] = {
+                        "code": row[0],
+                        "name": row[1],
+                        "device_count": row[2],
+                        "match_type": "company_brand",
+                        "matched_term": clean_query
+                    }
 
         # Sort by device count and apply limit
         product_codes = sorted(
@@ -317,9 +338,11 @@ class DeviceResolver:
             ]
 
         total_count = sum(p["device_count"] for p in product_codes)
+        primary_query = queries[0] if queries else ""
 
         return {
-            "query": query,
+            "query": primary_query,
+            "search_terms": queries,
             "total_devices": total_count,
             "product_codes": product_codes,
             "companies": companies

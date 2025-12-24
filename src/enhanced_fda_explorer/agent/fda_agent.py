@@ -60,6 +60,21 @@ def _merge_context(existing: Optional[dict], new: Optional[dict]) -> dict:
     return merged
 
 
+def _truncate_tool_output(content: str, max_chars: int = 2000) -> str:
+    """Truncate tool output to reduce token usage in conversation history.
+
+    Preserves the beginning of the output (usually contains summary/headers)
+    and adds a truncation notice if content exceeds max_chars.
+    """
+    if len(content) <= max_chars:
+        return content
+    truncated = content[:max_chars]
+    last_newline = truncated.rfind('\n')
+    if last_newline > max_chars * 0.7:
+        truncated = truncated[:last_newline]
+    return truncated + "\n\n[Output truncated for context efficiency. Full data available in structured response.]"
+
+
 class ResolverContext(TypedDict, total=False):
     """Context from resolver tools for search tools to reference."""
     devices: Optional[ResolvedEntities]
@@ -144,7 +159,7 @@ class ContextAwareToolNode:
                     })
 
                     tool_messages.append(ToolMessage(
-                        content=str(result),
+                        content=_truncate_tool_output(str(result)),
                         tool_call_id=tool_id,
                         name=tool_name
                     ))

@@ -272,7 +272,7 @@ class LocationResolverTool(BaseTool):
     ) -> str:
         try:
             data = self._fetch_all(search, limit)
-        except requests.exceptions.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return f"No manufacturers found in {location_name}."
             return f"FDA API error: {str(e)}"

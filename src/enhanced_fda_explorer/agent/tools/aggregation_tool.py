@@ -2,9 +2,10 @@
 Aggregated registrations tool - country and product-code rollups from OpenFDA registrations.
 Uses count endpoints (no per-record looping).
 """
-from typing import Type, Optional
+import json
+from typing import Type, Optional, Any
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from ...openfda_client import OpenFDAClient
 
@@ -30,6 +31,22 @@ class AggregateRegistrationsInput(BaseModel):
         default=25,
         description="Maximum establishments to list when include_establishments is true.",
     )
+
+    @validator("product_codes", pre=True)
+    def parse_product_codes(cls, v: Any) -> Optional[list[str]]:
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            return [v]
+        return v
 
 
 class AggregateRegistrationsTool(BaseTool):

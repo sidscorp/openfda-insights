@@ -1,6 +1,8 @@
 """
 Device Resolver Tool - GUDID database lookup for device identification.
 """
+import os
+from pathlib import Path
 from typing import Type, Optional, Callable
 import asyncio
 import logging
@@ -14,6 +16,7 @@ from ...config import get_config
 from ...models.responses import (
     ResolvedEntities, ProductCodeInfo, ManufacturerInfo, DeviceInfo
 )
+from ...services.semantic_expander import SemanticExpander
 
 logger = logging.getLogger("fda_agent.device_resolver")
 
@@ -27,11 +30,13 @@ class DeviceResolverTool(BaseTool):
     name: str = "resolve_device"
     description: str = """Look up medical devices in the GUDID database by name, brand, company, or product code.
     Returns product codes, GMDN terms, manufacturer info, and device identifiers.
-    Use this FIRST to identify devices and get FDA product codes before searching other databases."""
+    Use this FIRST to identify devices and get FDA product codes before searching other databases.
+    Supports semantic expansion: queries like "c section" will also search for "cesarean section"."""
     args_schema: Type[BaseModel] = DeviceResolverInput
 
     _db_path: str = ""
     _resolver: Optional[DeviceResolver] = None
+    _semantic_expander: Optional[SemanticExpander] = None
     _last_structured_result: Optional[ResolvedEntities] = None
     _progress_callback: Optional[Callable[[str], None]] = None
 
@@ -40,6 +45,37 @@ class DeviceResolverTool(BaseTool):
         config = get_config()
         self._db_path = db_path or config.gudid_db_path
         self._resolver = DeviceResolver(self._db_path)
+        self._init_semantic_expander(config)
+
+    def _init_semantic_expander(self, config):
+        """Initialize semantic expander if embeddings and API key are available."""
+        if not config.semantic_enabled:
+            logger.info("Semantic expansion disabled by config")
+            return
+
+        embeddings_dir = Path(config.semantic_embeddings_dir or "").resolve()
+        api_key = os.getenv("AI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+
+        if not embeddings_dir.exists():
+            logger.info(f"Semantic expansion disabled: embeddings not found at {embeddings_dir}")
+            return
+
+        if not api_key:
+            logger.info("Semantic expansion disabled: AI_API_KEY or OPENROUTER_API_KEY not set")
+            return
+
+        try:
+            self._semantic_expander = SemanticExpander(
+                embeddings_dir=embeddings_dir,
+                api_key=api_key,
+                synonym_threshold=config.semantic_synonym_threshold,
+                device_threshold=config.semantic_device_threshold,
+                cache_size=config.semantic_cache_size,
+                cache_ttl=config.semantic_cache_ttl,
+            )
+            logger.info(f"Semantic expansion enabled from {embeddings_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize semantic expander: {e}")
 
     def set_progress_callback(self, callback: Optional[Callable[[str], None]]):
         """Set a callback to receive progress updates during resolution."""
@@ -67,14 +103,35 @@ class DeviceResolverTool(BaseTool):
 
             start_time = time.time()
 
-            # Use fast SQL aggregation for better performance
+            search_terms = [query]
+            expansion_info = None
+
+            if self._semantic_expander:
+                try:
+                    expansion = self._semantic_expander.expand_device_query(query)
+                    if expansion.expanded_terms:
+                        search_terms = expansion.expanded_terms
+                        expansion_info = {
+                            "original_query": expansion.original_query,
+                            "expanded_to": expansion.expanded_terms,
+                            "synonym_matches": len(expansion.synonym_matches),
+                            "semantic_matches": len(expansion.semantic_matches),
+                            "expansion_time_ms": expansion.expansion_time_ms,
+                        }
+                        logger.info(f"Expanded '{query}' to {len(search_terms)} terms: {search_terms[:3]}...")
+                except Exception as e:
+                    logger.warning(f"Semantic expansion failed, using original query: {e}")
+
             fast_results = self._resolver.get_product_codes_fast(
-                query,
+                search_terms,
                 min_devices=2,
                 limit=limit,
                 progress_callback=self._emit_progress
             )
             execution_time = (time.time() - start_time) * 1000
+
+            if expansion_info:
+                fast_results["semantic_expansion"] = expansion_info
 
             self._last_structured_result = self._to_structured_fast(query, fast_results, execution_time)
             return self._format_results_fast(query, fast_results, execution_time)
@@ -269,23 +326,35 @@ class DeviceResolverTool(BaseTool):
         total = fast_results["total_devices"]
         product_codes = fast_results["product_codes"]
         companies = fast_results["companies"]
+        expansion = fast_results.get("semantic_expansion")
 
         if not product_codes:
             return f"No devices found matching '{query}' with 2+ devices per product code."
 
         lines = [f"Found {total} devices matching '{query}' (searched in {execution_time:.0f}ms):\n"]
 
+        if expansion and len(expansion.get("expanded_to", [])) > 1:
+            terms = expansion["expanded_to"]
+            lines.append(f"SEMANTIC EXPANSION: Searched {len(terms)} terms:")
+            for term in terms[:4]:
+                lines.append(f"  - {term}")
+            if len(terms) > 4:
+                lines.append(f"  - ... and {len(terms) - 4} more")
+            lines.append("")
+
         lines.append(f"PRODUCT CODES FOUND (Showing top 5 of {len(product_codes)} relevant codes):")
-        # LIMIT TO TOP 5
         for pc in product_codes[:5]:
-            lines.append(f"  {pc['code']}: {pc['name']} ({pc['device_count']} devices)")
-        
+            matched_term = pc.get('matched_term', '')
+            if matched_term and matched_term.lower() != query.lower():
+                lines.append(f"  {pc['code']}: {pc['name']} ({pc['device_count']} devices) [matched: {matched_term}]")
+            else:
+                lines.append(f"  {pc['code']}: {pc['name']} ({pc['device_count']} devices)")
+
         if len(product_codes) > 5:
-             lines.append(f"  ... and {len(product_codes) - 5} more codes (available in data table).")
+            lines.append(f"  ... and {len(product_codes) - 5} more codes (available in data table).")
 
         if companies:
             lines.append(f"\nTOP MANUFACTURERS (Showing top 5 of {len(companies)}):")
-            # LIMIT TO TOP 5
             for c in companies[:5]:
                 lines.append(f"  {c['name']}: {c['device_count']} devices")
             if len(companies) > 5:

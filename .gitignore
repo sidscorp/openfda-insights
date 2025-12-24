@@ -78,6 +78,9 @@ node_modules/
 *.sqlite3
 data/*.parquet
 data/*.csv
+data/embeddings/*.npz
+data/embeddings/*.json
+!data/README.md
 
 # Secrets
 *.pem

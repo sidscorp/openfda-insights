@@ -2,10 +2,11 @@
 Recalls Tool - Search FDA device recalls.
 """
 import asyncio
+import json
 from typing import Type, Optional, Callable, Dict, Any
 from collections import Counter
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from ...models.responses import RecallSearchResult, RecallRecord, AggregationCount
 from ...openfda_client import OpenFDAClient, HybridAggregationResult
@@ -26,6 +27,22 @@ class SearchRecallsInput(BaseModel):
     limit: int = Field(default=100, description="Maximum number of results")
     search_field: str = Field(default="both", description="Which field to search: 'product' (device name), 'firm' (manufacturer), or 'both'")
     country: str = Field(default="", description="Filter by recalling firm's country (e.g., 'China', 'Germany', 'United States')")
+
+    @validator("product_codes", pre=True)
+    def parse_product_codes(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            return [v] if v else []
+        return v
 
 
 class SearchRecallsTool(BaseTool):

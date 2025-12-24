@@ -439,6 +439,23 @@ class Config(BaseSettings):
             return os.path.expanduser(v)
         return v
 
+    # Semantic expansion settings
+    semantic_enabled: bool = Field(default=True, env="SEMANTIC_ENABLED")
+    semantic_embeddings_dir: Optional[str] = Field(default=None, env="SEMANTIC_EMBEDDINGS_DIR")
+    semantic_synonym_threshold: float = Field(default=0.75, env="SEMANTIC_SYNONYM_THRESHOLD", ge=0.0, le=1.0)
+    semantic_device_threshold: float = Field(default=0.60, env="SEMANTIC_DEVICE_THRESHOLD", ge=0.0, le=1.0)
+    semantic_manufacturer_threshold: float = Field(default=0.65, env="SEMANTIC_MANUFACTURER_THRESHOLD", ge=0.0, le=1.0)
+    semantic_cache_size: int = Field(default=100, env="SEMANTIC_CACHE_SIZE", ge=1, le=10000)
+    semantic_cache_ttl: int = Field(default=3600, env="SEMANTIC_CACHE_TTL", ge=60, le=86400)
+
+    @validator("semantic_embeddings_dir")
+    def expand_embeddings_path(cls, v, values):
+        """Expand ~ in embeddings path or default to data/embeddings/."""
+        if v:
+            return os.path.expanduser(v)
+        gudid_path = values.get("gudid_db_path", "data/gudid.db")
+        return str(Path(gudid_path).parent / "embeddings")
+
     # Search settings
     search_timeout: int = Field(default=30, env="SEARCH_TIMEOUT", ge=1, le=300)
     max_concurrent_searches: int = Field(default=5, env="MAX_CONCURRENT_SEARCHES", ge=1, le=50)

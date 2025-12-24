@@ -2,10 +2,11 @@
 510(k) Clearances Tool - Search FDA 510(k) premarket notifications.
 """
 import asyncio
+import json
 from typing import Type, Optional, Callable, Dict, Any
 from collections import Counter
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from ...openfda_client import OpenFDAClient, HybridAggregationResult
 
@@ -23,6 +24,22 @@ class Search510kInput(BaseModel):
     date_from: str = Field(default="", description="Start date in YYYYMMDD format")
     date_to: str = Field(default="", description="End date in YYYYMMDD format")
     limit: int = Field(default=100, description="Maximum number of results")
+
+    @validator("product_codes", pre=True)
+    def parse_product_codes(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            return [v] if v else []
+        return v
 
 
 class Search510kTool(BaseTool):

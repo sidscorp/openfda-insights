@@ -28,7 +28,6 @@ import { apiClient, type AgentStreamEvent, type QueryDetail } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { StructuredDataTable } from '@/components/StructuredDataTable'
-import { QueryDetailsDropdown } from '@/components/QueryDetailsDropdown'
 import { WorkspaceLayout } from '@/components/WorkspaceLayout'
 import { useSession } from '@/lib/session-context'
 import type { StoredMessage } from '@/lib/storage'
@@ -783,9 +782,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       )}
       {!isUser && message.role !== 'system' && !message.streaming && message.structuredData && (
         <StructuredDataTable data={message.structuredData as Parameters<typeof StructuredDataTable>[0]['data']} />
-      )}
-      {!isUser && message.role !== 'system' && !message.streaming && message.queryDetails && message.queryDetails.length > 0 && (
-        <QueryDetailsDropdown queries={message.queryDetails} />
       )}
       {!isUser && message.role !== 'system' && message.meta && (message.meta.inputTokens !== undefined || message.meta.outputTokens !== undefined) && (
         <HStack spacing={2} mt={3} wrap="wrap">

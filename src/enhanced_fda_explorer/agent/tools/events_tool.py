@@ -2,10 +2,11 @@
 Events Tool - Search FDA adverse event reports (MAUDE database).
 """
 import asyncio
+import json
 from typing import Type, Optional, Callable, Dict, Any
 from collections import Counter
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 import re
 
 from ...openfda_client import OpenFDAClient, HybridAggregationResult
@@ -50,6 +51,22 @@ class SearchEventsInput(BaseModel):
     date_to: str = Field(default="", description="End date in YYYYMMDD format")
     limit: int = Field(default=100, description="Maximum number of results")
     country: str = Field(default="", description="Filter by manufacturer's country (e.g., 'China', 'Germany', 'US')")
+
+    @validator("product_codes", pre=True)
+    def parse_product_codes(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            return [v] if v else []
+        return v
 
 
 class SearchEventsTool(BaseTool):
