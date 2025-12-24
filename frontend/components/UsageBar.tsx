@@ -3,24 +3,18 @@
 import { useEffect, useState } from 'react';
 import {
   Box,
-  Button,
-  FormControl,
-  FormLabel,
   HStack,
   Icon,
-  Input,
   Modal,
   ModalBody,
   ModalCloseButton,
   ModalContent,
-  ModalFooter,
   ModalHeader,
   ModalOverlay,
   Progress,
   Text,
   useColorModeValue,
   useDisclosure,
-  useToast,
   VStack,
 } from '@chakra-ui/react';
 import { InfoIcon, WarningIcon } from '@chakra-ui/icons';
@@ -29,10 +23,7 @@ import { apiClient, type UsageStats } from '@/lib/api';
 export function UsageBar() {
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const [error, setError] = useState(false);
-  const [passphrase, setPassphrase] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
-  const toast = useToast();
 
   const bg = useColorModeValue('gray.100', 'gray.900');
   const textColor = useColorModeValue('gray.600', 'gray.300');
@@ -55,39 +46,11 @@ export function UsageBar() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleExtendLimit = async () => {
-    if (!passphrase.trim()) return;
-
-    setIsSubmitting(true);
-    try {
-      await apiClient.extendUsageLimit(passphrase.trim());
-      toast({
-        title: 'Limit extended',
-        description: 'Your usage limit has been increased.',
-        status: 'success',
-        duration: 3000,
-      });
-      setPassphrase('');
-      onClose();
-      fetchUsage();
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Invalid passphrase';
-      toast({
-        title: 'Failed to extend limit',
-        description: errorMessage,
-        status: 'error',
-        duration: 4000,
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   if (error || !usage) {
     return null;
   }
 
-  const usedPct = (usage.total_cost_usd / usage.limit_usd) * 100;
+  const usedPct = (usage.request_count / usage.request_limit) * 100;
   const isWarning = usedPct >= 50 && usedPct < 80;
   const isDanger = usedPct >= 80;
 
@@ -100,10 +63,10 @@ export function UsageBar() {
           <HStack spacing={4} flex="1">
             <HStack spacing={2}>
               <Text fontSize="sm" fontWeight="500" color={textColor}>
-                Usage:
+                Requests:
               </Text>
               <Text fontSize="sm" color={textColor}>
-                ${usage.total_cost_usd.toFixed(4)} / ${usage.limit_usd.toFixed(2)}
+                {usage.request_count} / {usage.request_limit}
               </Text>
               <Icon
                 as={InfoIcon}
@@ -128,14 +91,9 @@ export function UsageBar() {
           {isDanger && (
             <HStack spacing={2}>
               <WarningIcon color="red.500" />
-              <Button
-                size="xs"
-                colorScheme="red"
-                variant="ghost"
-                onClick={onOpen}
-              >
-                Extend Limit
-              </Button>
+              <Text fontSize="xs" color="red.500" fontWeight="500">
+                Limit reached
+              </Text>
             </HStack>
           )}
         </HStack>
@@ -146,21 +104,21 @@ export function UsageBar() {
         <ModalContent>
           <ModalHeader>About Usage Limits</ModalHeader>
           <ModalCloseButton />
-          <ModalBody>
+          <ModalBody pb={6}>
             <VStack spacing={4} align="stretch">
               <Box>
                 <Text fontWeight="600" mb={2}>What is this?</Text>
                 <Text fontSize="sm" color={mutedColor}>
-                  OpenFDA Explorer uses AI to analyze FDA medical device data. Each query consumes
-                  tokens from the underlying language model, which has an associated cost.
+                  OpenFDA Explorer uses AI to analyze FDA medical device data. Each query
+                  uses a free AI model via OpenRouter.
                 </Text>
               </Box>
 
               <Box>
                 <Text fontWeight="600" mb={2}>Why is there a limit?</Text>
                 <Text fontSize="sm" color={mutedColor}>
-                  To keep this tool free and accessible, each visitor has a usage allowance of
-                  ${usage?.limit_usd.toFixed(2) || '1.50'} in API costs. This prevents abuse and
+                  To keep this tool accessible, each visitor has an allowance of
+                  {' '}{usage?.request_limit || 100} requests. This prevents abuse and
                   ensures fair access for everyone.
                 </Text>
               </Box>
@@ -168,47 +126,13 @@ export function UsageBar() {
               <Box>
                 <Text fontWeight="600" mb={2}>Your current usage</Text>
                 <Text fontSize="sm" color={mutedColor}>
-                  {usage?.request_count || 0} requests made<br />
-                  {usage?.total_input_tokens.toLocaleString() || 0} input tokens + {usage?.total_output_tokens.toLocaleString() || 0} output tokens<br />
-                  Total cost: ${usage?.total_cost_usd.toFixed(4) || '0.0000'}
+                  {usage?.request_count || 0} / {usage?.request_limit || 100} requests used<br />
+                  {usage?.requests_remaining || 0} requests remaining<br />
+                  {usage?.total_input_tokens.toLocaleString() || 0} input + {usage?.total_output_tokens.toLocaleString() || 0} output tokens
                 </Text>
-              </Box>
-
-              <Box borderTopWidth="1px" pt={4}>
-                <Text fontWeight="600" mb={2}>Need more?</Text>
-                <Text fontSize="sm" color={mutedColor} mb={3}>
-                  If you have a passphrase, enter it below to extend your limit. Otherwise,
-                  contact the developer to request additional quota.
-                </Text>
-
-                <FormControl>
-                  <FormLabel fontSize="sm">Passphrase</FormLabel>
-                  <Input
-                    type="password"
-                    placeholder="Enter passphrase"
-                    value={passphrase}
-                    onChange={(e) => setPassphrase(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && passphrase.trim()) {
-                        handleExtendLimit();
-                      }
-                    }}
-                  />
-                </FormControl>
               </Box>
             </VStack>
           </ModalBody>
-
-          <ModalFooter>
-            <Button
-              colorScheme="brand"
-              onClick={handleExtendLimit}
-              isLoading={isSubmitting}
-              isDisabled={!passphrase.trim()}
-            >
-              Extend Limit
-            </Button>
-          </ModalFooter>
         </ModalContent>
       </Modal>
     </>

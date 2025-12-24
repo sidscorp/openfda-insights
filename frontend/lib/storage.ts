@@ -9,6 +9,16 @@ export interface Session {
   messageCount: number;
 }
 
+export interface StoredQueryDetail {
+  id: string;
+  tool: string;
+  dataSource: string;
+  args: Record<string, unknown>;
+  status: 'pending' | 'complete' | 'error';
+  resultSummary?: string;
+  timestamp: number;
+}
+
 export interface StoredMessage {
   id: string;
   sessionId: string;
@@ -22,6 +32,7 @@ export interface StoredMessage {
     thinkingContent?: string;
   };
   structuredData?: Record<string, unknown>;
+  queryDetails?: StoredQueryDetail[];
 }
 
 export interface Artifact {

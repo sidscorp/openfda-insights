@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 USAGE_EXTEND_SECRET = os.environ.get("FDA_USAGE_EXTEND_SECRET", "changeme")
 USAGE_USER_PASSPHRASE = os.environ.get("FDA_USAGE_PASSPHRASE", "")
-USAGE_PASSPHRASE_EXTENSION = float(os.environ.get("FDA_USAGE_PASSPHRASE_EXTENSION", "5.0"))
+USAGE_PASSPHRASE_EXTENSION = int(os.environ.get("FDA_USAGE_PASSPHRASE_EXTENSION", "50"))
 
 # Global instances
 router = QueryRouter()
@@ -71,9 +71,9 @@ async def usage_limit_middleware(request: Request, call_next):
                     status_code=429,
                     content={
                         "error": "usage_limit_exceeded",
-                        "used": round(used, 4),
-                        "limit": round(limit, 2),
-                        "message": "You have exceeded your usage limit. Contact the developer to extend your quota.",
+                        "request_count": used,
+                        "request_limit": limit,
+                        "message": "You have exceeded your request limit. Contact the developer to extend your quota.",
                         "contact": "Contact developer to extend limit"
                     }
                 )
@@ -520,24 +520,6 @@ async def agent_stream(
                 if events_result:
                     structured_data["events"] = events_result.model_dump() if hasattr(events_result, 'model_dump') else events_result
 
-            cost_estimates = {
-                "openrouter": {"input": 2.0, "output": 6.0},
-                "openai": {"input": 5.0, "output": 15.0},
-                "anthropic": {"input": 15.0, "output": 75.0},
-                "gemini": {"input": 0.125, "output": 0.375},
-            }
-            total_cost = 0.0
-            provider_key = provider.lower()
-            if provider_key == "openrouter" and model:
-                if "flash" in model.lower():
-                    provider_key = "gemini"
-            if provider_key in cost_estimates and total_input_tokens > 0:
-                rates = cost_estimates[provider_key]
-                total_cost = (
-                    (total_input_tokens / 1_000_000) * rates["input"] +
-                    (total_output_tokens / 1_000_000) * rates["output"]
-                )
-
             try:
                 tracker = get_usage_tracker()
                 tracker.record_usage(
@@ -545,7 +527,6 @@ async def agent_stream(
                     session_id=session_id,
                     input_tokens=total_input_tokens,
                     output_tokens=total_output_tokens,
-                    cost_usd=total_cost,
                     model=used_model
                 )
             except Exception as usage_err:
@@ -558,7 +539,6 @@ async def agent_stream(
                 "tokens": total_input_tokens + total_output_tokens,
                 "input_tokens": total_input_tokens,
                 "output_tokens": total_output_tokens,
-                "cost": total_cost if total_cost > 0 else None,
                 "structured_data": structured_data if structured_data else None,
             }
             yield f"data: {json.dumps(complete_payload)}\n\n"
@@ -1316,12 +1296,11 @@ async def get_usage(request: Request):
         stats = tracker.get_stats(ip)
         return {
             "ip_address": stats.ip_address,
-            "total_cost_usd": round(stats.total_cost_usd, 6),
-            "limit_usd": stats.limit_usd,
-            "remaining_usd": round(stats.limit_usd - stats.total_cost_usd, 6),
+            "request_count": stats.request_count,
+            "request_limit": stats.request_limit,
+            "requests_remaining": stats.request_limit - stats.request_count,
             "total_input_tokens": stats.total_input_tokens,
             "total_output_tokens": stats.total_output_tokens,
-            "request_count": stats.request_count,
             "first_request": stats.first_request,
             "last_request": stats.last_request,
         }
@@ -1332,7 +1311,7 @@ async def get_usage(request: Request):
 
 class ExtendLimitRequest(BaseModel):
     ip_address: Optional[str] = Field(None, description="IP address to extend limit for (admin only)")
-    new_limit: Optional[float] = Field(None, description="New limit in USD (admin only)")
+    new_limit: Optional[int] = Field(None, description="New request limit (admin only)")
     secret: Optional[str] = Field(None, description="Admin secret key")
     passphrase: Optional[str] = Field(None, description="User passphrase for self-service extension")
 
@@ -1354,7 +1333,7 @@ async def extend_usage_limit(request: ExtendLimitRequest, req: Request):
             return {
                 "success": True,
                 "ip_address": request.ip_address,
-                "new_limit": request.new_limit,
+                "new_request_limit": request.new_limit,
             }
         except Exception as e:
             logger.error(f"Extend limit error: {e}")
@@ -1368,12 +1347,12 @@ async def extend_usage_limit(request: ExtendLimitRequest, req: Request):
             raise HTTPException(status_code=403, detail="Invalid passphrase")
         try:
             stats = tracker.get_stats(client_ip)
-            current_limit = stats.get("limit_usd", 1.50)
+            current_limit = stats.request_limit
             new_limit = current_limit + USAGE_PASSPHRASE_EXTENSION
             tracker.extend_limit(client_ip, new_limit, extended_by="passphrase")
             return {
                 "success": True,
-                "new_limit": new_limit,
+                "new_request_limit": new_limit,
             }
         except Exception as e:
             logger.error(f"Passphrase extend error: {e}")

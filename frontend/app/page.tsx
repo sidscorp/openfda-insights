@@ -24,13 +24,15 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { CheckIcon, CloseIcon, MoonIcon, SunIcon, WarningIcon } from '@chakra-ui/icons'
-import { apiClient, type AgentStreamEvent } from '@/lib/api'
+import { apiClient, type AgentStreamEvent, type QueryDetail } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { StructuredDataTable } from '@/components/StructuredDataTable'
+import { QueryDetailsDropdown } from '@/components/QueryDetailsDropdown'
 import { WorkspaceLayout } from '@/components/WorkspaceLayout'
 import { useSession } from '@/lib/session-context'
 import type { StoredMessage } from '@/lib/storage'
+import { getDataSourceInfo, parseResultSummary } from '@/lib/tool-mappings'
 
 type Role = 'user' | 'assistant' | 'system'
 type StreamPhase = 'thinking' | 'tool' | 'error' | 'final'
@@ -50,6 +52,7 @@ interface ChatMessage {
   streaming?: boolean
   meta?: ResponseMeta
   structuredData?: Record<string, unknown>
+  queryDetails?: QueryDetail[]
 }
 
 const allStarterPrompts = [
@@ -99,6 +102,7 @@ function ChatArea() {
   const [sessionTokens, setSessionTokens] = useState(0)
   const [hasGeneratedTitle, setHasGeneratedTitle] = useState(false)
   const [starterPrompts] = useState(() => getRandomPrompts(3))
+  const [pendingQueries, setPendingQueries] = useState<Map<string, QueryDetail[]>>(new Map())
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasDeltaRef = useRef(false)
   const streamCompletedRef = useRef(false)
@@ -139,6 +143,7 @@ function ChatArea() {
           content: m.content,
           meta: m.meta as ResponseMeta,
           structuredData: m.structuredData as Record<string, unknown>,
+          queryDetails: m.queryDetails as QueryDetail[],
         })),
       ]
       setMessages(reconstructedMessages)
@@ -226,6 +231,7 @@ function ChatArea() {
       setToolCallsDone(0)
       setActiveUserMessageId(userMessage.id)
       hasDeltaRef.current = false
+      setPendingQueries(new Map())
 
       addMessage({ role: 'user', content: text }, userMessage.id)
 
@@ -260,45 +266,87 @@ function ChatArea() {
               setToolHistory((prev) => [...prev, event.tool])
               setToolCallsTotal((prev) => prev + 1)
               setStreamStatus({ phase: 'tool', message: '' })
+
+              const queryId = `${event.tool}-${Date.now()}`
+              const sourceInfo = getDataSourceInfo(event.tool)
+              const newQuery: QueryDetail = {
+                id: queryId,
+                tool: event.tool,
+                dataSource: sourceInfo.name,
+                args: event.args,
+                status: 'pending',
+                timestamp: Date.now(),
+              }
+              setPendingQueries((prev) => {
+                const existing = prev.get(assistantMessage.id) || []
+                const updated = new Map(prev)
+                updated.set(assistantMessage.id, [...existing, newQuery])
+                return updated
+              })
             } else if (event.type === 'tool_result') {
               setCurrentTool(null)
               setToolCallsDone((prev) => prev + 1)
+
+              setPendingQueries((prev) => {
+                const queries = prev.get(assistantMessage.id) || []
+                const pendingIdx = queries.findIndex((q) => q.status === 'pending')
+                if (pendingIdx >= 0) {
+                  const updated = [...queries]
+                  updated[pendingIdx] = {
+                    ...updated[pendingIdx],
+                    status: 'complete',
+                    resultSummary: parseResultSummary(updated[pendingIdx].tool, event.content),
+                  }
+                  const newMap = new Map(prev)
+                  newMap.set(assistantMessage.id, updated)
+                  return newMap
+                }
+                return prev
+              })
             } else if (event.type === 'complete') {
               const finalContent = hasDeltaRef.current ? undefined : event.answer
-              setMessages((prev) =>
-                prev.map((m) => {
-                  if (m.id !== assistantMessage.id) return m
-                  return {
-                    ...m,
-                    content: finalContent ?? m.content,
-                    streaming: false,
-                    meta: {
-                      model: event.model,
-                      tokens: event.tokens,
-                      inputTokens: event.input_tokens,
-                      outputTokens: event.output_tokens,
-                      cost: event.cost,
-                    },
-                    structuredData: event.structured_data || undefined,
-                  }
-                })
-              )
 
-              // Use event.answer since we can't reliably get streamed content from stale closure
-              const assistantContent = event.answer
+              setPendingQueries((prev) => {
+                const queries = prev.get(assistantMessage.id) || []
 
-              addMessage({
-                role: 'assistant',
-                content: assistantContent,
-                meta: {
-                  model: event.model,
-                  tokens: event.tokens,
-                  cost: event.cost,
-                },
-                structuredData: event.structured_data,
-              }, assistantMessage.id)
+                setMessages((prevMessages) =>
+                  prevMessages.map((m) => {
+                    if (m.id !== assistantMessage.id) return m
+                    return {
+                      ...m,
+                      content: finalContent ?? m.content,
+                      streaming: false,
+                      meta: {
+                        model: event.model,
+                        tokens: event.tokens,
+                        inputTokens: event.input_tokens,
+                        outputTokens: event.output_tokens,
+                        cost: event.cost,
+                      },
+                      structuredData: event.structured_data || undefined,
+                      queryDetails: queries.length > 0 ? queries : undefined,
+                    }
+                  })
+                )
 
-              generateTitleIfNeeded(text, assistantContent)
+                const assistantContent = event.answer
+
+                addMessage({
+                  role: 'assistant',
+                  content: assistantContent,
+                  meta: {
+                    model: event.model,
+                    tokens: event.tokens,
+                    cost: event.cost,
+                  },
+                  structuredData: event.structured_data,
+                  queryDetails: queries.length > 0 ? queries : undefined,
+                }, assistantMessage.id)
+
+                generateTitleIfNeeded(text, assistantContent)
+
+                return prev
+              })
 
               setCurrentTool(null)
               setStreamStatus({ phase: 'final', message: '' })
@@ -736,18 +784,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       {!isUser && message.role !== 'system' && !message.streaming && message.structuredData && (
         <StructuredDataTable data={message.structuredData as Parameters<typeof StructuredDataTable>[0]['data']} />
       )}
-      {!isUser && message.role !== 'system' && message.meta && (
+      {!isUser && message.role !== 'system' && !message.streaming && message.queryDetails && message.queryDetails.length > 0 && (
+        <QueryDetailsDropdown queries={message.queryDetails} />
+      )}
+      {!isUser && message.role !== 'system' && message.meta && (message.meta.inputTokens !== undefined || message.meta.outputTokens !== undefined) && (
         <HStack spacing={2} mt={3} wrap="wrap">
-          {message.meta.model && (
-            <Tag size="sm" variant="subtle">
-              Model: {message.meta.model}
-            </Tag>
-          )}
-          {message.meta.tokens !== undefined && (
-            <Tag size="sm" variant="subtle">
-              Tokens: {message.meta.tokens}
-            </Tag>
-          )}
           {message.meta.inputTokens !== undefined && (
             <Tag size="sm" variant="subtle">
               In: {message.meta.inputTokens}
@@ -758,9 +799,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               Out: {message.meta.outputTokens}
             </Tag>
           )}
-          <Tag size="sm" variant="subtle">
-            Cost: {message.meta.cost != null ? `$${message.meta.cost.toFixed(4)}` : 'n/a'}
-          </Tag>
         </HStack>
       )}
     </Box>

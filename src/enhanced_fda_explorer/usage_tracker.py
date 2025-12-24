@@ -1,5 +1,5 @@
 """
-Usage Tracker - SQLite-based IP usage tracking and cost limiting.
+Usage Tracker - SQLite-based IP usage tracking and request limiting.
 """
 import sqlite3
 import os
@@ -11,17 +11,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "/var/lib/fda-agent/usage.db"
-DEFAULT_LIMIT_USD = 1.50
+DEFAULT_REQUEST_LIMIT = 100
 
 
 @dataclass
 class UsageStats:
     ip_address: str
-    total_cost_usd: float
-    limit_usd: float
+    request_count: int
+    request_limit: int
     total_input_tokens: int
     total_output_tokens: int
-    request_count: int
     first_request: Optional[str]
     last_request: Optional[str]
 
@@ -53,13 +52,12 @@ class UsageTracker:
                     timestamp TEXT NOT NULL,
                     input_tokens INTEGER NOT NULL DEFAULT 0,
                     output_tokens INTEGER NOT NULL DEFAULT 0,
-                    cost_usd REAL NOT NULL DEFAULT 0.0,
                     model TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS ip_limits (
                     ip_address TEXT PRIMARY KEY,
-                    limit_usd REAL NOT NULL DEFAULT 1.50,
+                    request_limit INTEGER NOT NULL DEFAULT 100,
                     extended_at TEXT,
                     extended_by TEXT
                 );
@@ -77,61 +75,60 @@ class UsageTracker:
         session_id: Optional[str],
         input_tokens: int,
         output_tokens: int,
-        cost_usd: float,
         model: Optional[str] = None
     ) -> None:
         conn = self._get_connection()
         try:
             conn.execute("""
-                INSERT INTO usage_records (ip_address, session_id, timestamp, input_tokens, output_tokens, cost_usd, model)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (ip_address, session_id, datetime.utcnow().isoformat(), input_tokens, output_tokens, cost_usd, model))
+                INSERT INTO usage_records (ip_address, session_id, timestamp, input_tokens, output_tokens, model)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (ip_address, session_id, datetime.utcnow().isoformat(), input_tokens, output_tokens, model))
             conn.commit()
-            logger.debug(f"Recorded usage: IP={ip_address}, cost=${cost_usd:.6f}")
+            logger.debug(f"Recorded usage: IP={ip_address}, tokens={input_tokens}+{output_tokens}")
         finally:
             conn.close()
 
-    def get_ip_usage(self, ip_address: str) -> float:
+    def get_request_count(self, ip_address: str) -> int:
         conn = self._get_connection()
         try:
             row = conn.execute("""
-                SELECT COALESCE(SUM(cost_usd), 0.0) as total_cost
+                SELECT COUNT(*) as request_count
                 FROM usage_records
                 WHERE ip_address = ?
             """, (ip_address,)).fetchone()
-            return row["total_cost"] if row else 0.0
+            return row["request_count"] if row else 0
         finally:
             conn.close()
 
-    def get_ip_limit(self, ip_address: str) -> float:
+    def get_request_limit(self, ip_address: str) -> int:
         conn = self._get_connection()
         try:
             row = conn.execute("""
-                SELECT limit_usd FROM ip_limits WHERE ip_address = ?
+                SELECT request_limit FROM ip_limits WHERE ip_address = ?
             """, (ip_address,)).fetchone()
-            return row["limit_usd"] if row else DEFAULT_LIMIT_USD
+            return row["request_limit"] if row else DEFAULT_REQUEST_LIMIT
         finally:
             conn.close()
 
-    def check_limit(self, ip_address: str) -> Tuple[bool, float, float]:
-        used = self.get_ip_usage(ip_address)
-        limit = self.get_ip_limit(ip_address)
+    def check_limit(self, ip_address: str) -> Tuple[bool, int, int]:
+        used = self.get_request_count(ip_address)
+        limit = self.get_request_limit(ip_address)
         allowed = used < limit
         return (allowed, used, limit)
 
-    def extend_limit(self, ip_address: str, new_limit: float, extended_by: Optional[str] = None) -> None:
+    def extend_limit(self, ip_address: str, new_limit: int, extended_by: Optional[str] = None) -> None:
         conn = self._get_connection()
         try:
             conn.execute("""
-                INSERT INTO ip_limits (ip_address, limit_usd, extended_at, extended_by)
+                INSERT INTO ip_limits (ip_address, request_limit, extended_at, extended_by)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(ip_address) DO UPDATE SET
-                    limit_usd = excluded.limit_usd,
+                    request_limit = excluded.request_limit,
                     extended_at = excluded.extended_at,
                     extended_by = excluded.extended_by
             """, (ip_address, new_limit, datetime.utcnow().isoformat(), extended_by))
             conn.commit()
-            logger.info(f"Extended limit for {ip_address} to ${new_limit:.2f}")
+            logger.info(f"Extended limit for {ip_address} to {new_limit} requests")
         finally:
             conn.close()
 
@@ -140,7 +137,6 @@ class UsageTracker:
         try:
             row = conn.execute("""
                 SELECT
-                    COALESCE(SUM(cost_usd), 0.0) as total_cost,
                     COALESCE(SUM(input_tokens), 0) as total_input,
                     COALESCE(SUM(output_tokens), 0) as total_output,
                     COUNT(*) as request_count,
@@ -150,15 +146,14 @@ class UsageTracker:
                 WHERE ip_address = ?
             """, (ip_address,)).fetchone()
 
-            limit = self.get_ip_limit(ip_address)
+            limit = self.get_request_limit(ip_address)
 
             return UsageStats(
                 ip_address=ip_address,
-                total_cost_usd=row["total_cost"] if row else 0.0,
-                limit_usd=limit,
+                request_count=row["request_count"] if row else 0,
+                request_limit=limit,
                 total_input_tokens=row["total_input"] if row else 0,
                 total_output_tokens=row["total_output"] if row else 0,
-                request_count=row["request_count"] if row else 0,
                 first_request=row["first_request"] if row else None,
                 last_request=row["last_request"] if row else None,
             )

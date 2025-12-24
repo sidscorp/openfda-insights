@@ -44,6 +44,16 @@ export type AgentStreamEvent =
   | { type: 'complete'; answer: string; model?: string; tokens?: number; input_tokens?: number; output_tokens?: number; cost?: number; structured_data?: any }
   | { type: 'error'; message: string }
 
+export interface QueryDetail {
+  id: string
+  tool: string
+  dataSource: string
+  args: Record<string, unknown>
+  status: 'pending' | 'complete' | 'error'
+  resultSummary?: string
+  timestamp: number
+}
+
 export interface SearchRequest {
   query: string
   query_type?: 'device' | 'manufacturer' | 'recall'
@@ -332,20 +342,19 @@ class APIClient {
 
 export interface UsageStats {
   ip_address: string
-  total_cost_usd: number
-  limit_usd: number
-  remaining_usd: number
+  request_count: number
+  request_limit: number
+  requests_remaining: number
   total_input_tokens: number
   total_output_tokens: number
-  request_count: number
   first_request: string | null
   last_request: string | null
 }
 
 export interface UsageLimitError {
   error: 'usage_limit_exceeded'
-  used: number
-  limit: number
+  request_count: number
+  request_limit: number
   message: string
   contact: string
 }
