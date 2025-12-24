@@ -307,6 +307,56 @@ class APIClient {
 
     return es
   }
+
+  async getUsage(): Promise<UsageStats> {
+    return this.request<UsageStats>('/usage')
+  }
+
+  async generateSessionTitle(firstUserMessage: string, firstAssistantResponse: string): Promise<{ title: string }> {
+    return this.request<{ title: string }>('/sessions/generate-title', {
+      method: 'POST',
+      body: JSON.stringify({
+        first_user_message: firstUserMessage,
+        first_assistant_response: firstAssistantResponse,
+      }),
+    })
+  }
+
+  async extendUsageLimit(passphrase: string): Promise<{ success: boolean; new_limit: number }> {
+    return this.request<{ success: boolean; new_limit: number }>('/usage/extend', {
+      method: 'POST',
+      body: JSON.stringify({ passphrase }),
+    })
+  }
+}
+
+export interface UsageStats {
+  ip_address: string
+  total_cost_usd: number
+  limit_usd: number
+  remaining_usd: number
+  total_input_tokens: number
+  total_output_tokens: number
+  request_count: number
+  first_request: string | null
+  last_request: string | null
+}
+
+export interface UsageLimitError {
+  error: 'usage_limit_exceeded'
+  used: number
+  limit: number
+  message: string
+  contact: string
+}
+
+export function isUsageLimitError(error: unknown): error is UsageLimitError {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'error' in error &&
+    (error as UsageLimitError).error === 'usage_limit_exceeded'
+  )
 }
 
 export const apiClient = new APIClient()
