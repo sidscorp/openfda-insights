@@ -90,3 +90,6 @@ credentials.json
 # Local workflow files
 tasks.yaml
 scripts/manage_tasks.py
+
+# Include scratch/ folder
+scratch/
