@@ -28,10 +28,19 @@ class DeviceResolverInput(BaseModel):
 
 class DeviceResolverTool(BaseTool):
     name: str = "resolve_device"
-    description: str = """Look up medical devices in the GUDID database by name, brand, company, or product code.
-    Returns product codes, GMDN terms, manufacturer info, and device identifiers.
-    Use this FIRST to identify devices and get FDA product codes before searching other databases.
-    Supports semantic expansion: queries like "c section" will also search for "cesarean section"."""
+    description: str = """Search for FDA product codes by device TYPE NAME (natural language).
+    Returns matching product codes with device counts and top manufacturers from GUDID.
+
+    USE THIS for device code lookups:
+    - "What product codes are for surgical masks?" → resolve_device(query="surgical mask")
+    - "Find ventilator device codes" → resolve_device(query="ventilator")
+
+    DO NOT USE ALONE for geographic/country questions - pair with `aggregate_registrations`:
+    - "Which country makes the most masks?" → resolve_device("mask") + aggregate_registrations(query="mask")
+    - "Top manufacturers by country" → needs aggregate_registrations for country-level data
+
+    DO NOT USE when user already has a 3-letter product code like MSH, LYZ, FXX.
+    For those queries, use list_devices instead."""
     args_schema: Type[BaseModel] = DeviceResolverInput
 
     _db_path: str = ""

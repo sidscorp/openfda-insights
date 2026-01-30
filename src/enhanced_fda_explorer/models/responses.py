@@ -22,6 +22,7 @@ class ManufacturerInfo(BaseModel):
     name: str = Field(description="Company/manufacturer name")
     device_count: int = Field(description="Number of devices from this manufacturer")
     variations: list[str] = Field(default_factory=list, description="Name variations found")
+    top_product_codes: list["ProductCodeInfo"] = Field(default_factory=list, description="Top product codes for this manufacturer")
 
 
 class DeviceInfo(BaseModel):
@@ -32,6 +33,24 @@ class DeviceInfo(BaseModel):
     primary_di: Optional[str] = None
     confidence: float = Field(description="Match confidence 0.0-1.0")
     match_field: Optional[str] = Field(default=None, description="Field that matched the query")
+
+
+class DeviceListRecord(BaseModel):
+    brand_name: str = Field(description="Device brand name")
+    company_name: str = Field(description="Manufacturer/company name")
+    version_model_number: Optional[str] = Field(default=None, description="Model or version number")
+    primary_di: Optional[str] = Field(default=None, description="Primary Device Identifier (UDI-DI)")
+    device_description: Optional[str] = Field(default=None, description="Device description")
+    product_codes: list[str] = Field(default_factory=list, description="FDA product codes")
+
+
+class DeviceListResult(BaseModel):
+    query: str = Field(description="Original query or product code")
+    product_code: Optional[str] = Field(default=None, description="Specific product code searched")
+    product_code_name: Optional[str] = Field(default=None, description="Name of the product code")
+    device_class: Optional[str] = Field(default=None, description="FDA device class (1, 2, 3)")
+    total_found: int = Field(description="Total devices matching the query")
+    records: list[DeviceListRecord] = Field(default_factory=list, description="Device records")
 
 
 class ResolvedEntities(BaseModel):
@@ -144,6 +163,77 @@ class ClassificationSearchResult(BaseModel):
         description="Server-side aggregations from full dataset"
     )
     class_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+
+
+class PMARecord(BaseModel):
+    pma_number: str
+    trade_name: Optional[str] = None
+    generic_name: Optional[str] = None
+    applicant: str
+    decision_date: str
+    decision_code: Optional[str] = None
+    advisory_committee: Optional[str] = None
+    supplement_number: Optional[str] = None
+    product_code: Optional[str] = None
+
+
+class PMASearchResult(BaseModel):
+    query: str
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    total_found: int
+    records: list[PMARecord] = Field(default_factory=list)
+    aggregations: dict[str, list[AggregationCount]] = Field(
+        default_factory=dict,
+        description="Server-side aggregations from full dataset"
+    )
+    decision_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+
+
+class UDIRecord(BaseModel):
+    brand_name: Optional[str] = None
+    company_name: Optional[str] = None
+    version_model_number: Optional[str] = None
+    primary_di: Optional[str] = None
+    mri_safety: Optional[str] = None
+    device_description: Optional[str] = None
+    is_sterile: bool = False
+    is_single_use: Optional[bool] = None
+    device_count_in_base_package: Optional[int] = None
+
+
+class UDISearchResult(BaseModel):
+    query: str
+    total_found: int
+    records: list[UDIRecord] = Field(default_factory=list)
+    aggregations: dict[str, list[AggregationCount]] = Field(
+        default_factory=dict,
+        description="Server-side aggregations from full dataset"
+    )
+    company_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+
+
+class RegistrationRecord(BaseModel):
+    registration_number: Optional[str] = None
+    name: str
+    city: Optional[str] = None
+    state_code: Optional[str] = None
+    country_code: str
+    address_line_1: Optional[str] = None
+    postal_code: Optional[str] = None
+    proprietary_names: list[str] = Field(default_factory=list)
+
+
+class RegistrationSearchResult(BaseModel):
+    query: str
+    total_found: int
+    records: list[RegistrationRecord] = Field(default_factory=list)
+    aggregations: dict[str, list[AggregationCount]] = Field(
+        default_factory=dict,
+        description="Server-side aggregations from full dataset"
+    )
+    country_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
+    state_counts: dict[str, int] = Field(default_factory=dict, description="Deprecated: use aggregations")
 
 
 class LocationContext(BaseModel):

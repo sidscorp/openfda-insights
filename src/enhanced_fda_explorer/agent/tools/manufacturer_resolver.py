@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field
 
 from ...tools.device_resolver import DeviceResolver
 from ...config import get_config
-from ...models.responses import ManufacturerInfo
+from ...models.responses import ManufacturerInfo, ProductCodeInfo
 from ...services.semantic_expander import SemanticExpander
+from ...services.classification_cache import ClassificationCache
 
 logger = logging.getLogger("fda_agent.manufacturer_resolver")
 
@@ -68,6 +69,34 @@ class ManufacturerResolverTool(BaseTool):
     def get_last_structured_result(self) -> Optional[list[ManufacturerInfo]]:
         return self._last_structured_result
 
+    def _get_product_codes_for_manufacturer(self, company_name: str, limit: int = 5) -> list[ProductCodeInfo]:
+        """Get top product codes for a specific manufacturer from GUDID."""
+        sql = """
+            SELECT pc.product_code, MAX(pc.product_code_name) as name, COUNT(*) as count
+            FROM devices d
+            JOIN product_codes pc ON d.public_device_record_key = pc.device_key
+            WHERE d.company_name = ?
+            GROUP BY pc.product_code
+            ORDER BY count DESC
+            LIMIT ?
+        """
+        try:
+            results = self._resolver.conn.execute(sql, [company_name, limit]).fetchall()
+            codes = [row[0] for row in results]
+            device_classes = ClassificationCache.get_batch(codes)
+            return [
+                ProductCodeInfo(
+                    code=row[0],
+                    name=row[1] or row[0],
+                    device_count=row[2],
+                    device_class=device_classes.get(row[0])
+                )
+                for row in results
+            ]
+        except Exception as e:
+            logger.warning(f"Error getting product codes for {company_name}: {e}")
+            return []
+
     def _run(self, query: str, limit: int = 100) -> str:
         try:
             if not self._resolver.conn:
@@ -90,15 +119,25 @@ class ManufacturerResolverTool(BaseTool):
 
             all_results = []
             for term in search_terms:
+                term_lower = term.lower().strip()
+                # Use word-boundary matching: term at start, after space, or after punctuation
+                # This prevents "BD" from matching "Gebdi" or "LAMBDA"
                 sql = """
                     SELECT company_name, COUNT(*) as device_count
                     FROM devices
                     WHERE LOWER(company_name) LIKE ?
+                       OR LOWER(company_name) LIKE ?
+                       OR LOWER(company_name) LIKE ?
                     GROUP BY company_name
                     ORDER BY device_count DESC
                     LIMIT ?
                 """
-                results = self._resolver.conn.execute(sql, [f"%{term.lower()}%", limit]).fetchall()
+                results = self._resolver.conn.execute(sql, [
+                    f"{term_lower}%",        # Starts with term
+                    f"% {term_lower}%",      # Term after space
+                    f"%.{term_lower}%",      # Term after period (abbreviations)
+                    limit
+                ]).fetchall()
                 all_results.extend(results)
 
             seen = set()
@@ -142,14 +181,19 @@ class ManufacturerResolverTool(BaseTool):
                 primary_name = info["names"][0]
                 total = info["total_count"]
                 variations = info["names"]
+                top_codes = self._get_product_codes_for_manufacturer(primary_name, limit=5)
 
                 self._last_structured_result.append(ManufacturerInfo(
                     name=primary_name,
                     device_count=total,
-                    variations=variations
+                    variations=variations,
+                    top_product_codes=top_codes
                 ))
 
                 lines.append(f"• {primary_name} ({total} devices)")
+                if top_codes:
+                    code_summary = ", ".join([f"{c.name} ({c.code})" for c in top_codes[:3]])
+                    lines.append(f"  Top categories: {code_summary}")
                 if len(variations) > 1:
                     lines.append(f"  Variations: {', '.join(variations[1:5])}")
                     if len(variations) > 5:

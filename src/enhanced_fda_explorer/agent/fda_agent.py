@@ -21,6 +21,7 @@ tool_logger = logging.getLogger("fda_agent.tools")
 from .prompts import get_fda_system_prompt
 from .tools import (
     DeviceResolverTool,
+    DeviceListTool,
     ManufacturerResolverTool,
     SearchEventsTool,
     SearchRecallsTool,
@@ -44,7 +45,157 @@ from ..models.responses import (
     ToolExecution,
     TokenUsage,
 )
-from ..models.artifacts import DataArtifact, ArtifactType
+from ..models.artifacts import DataArtifact, ArtifactType, DisplayHints, ColumnConfig, NestedTableConfig
+
+
+TOOL_DISPLAY_HINTS: dict[str, DisplayHints] = {
+    "resolve_device": DisplayHints(
+        render_type="table",
+        title="Resolved Devices",
+        columns=[
+            ColumnConfig(key="code", label="Code", width="80px", formatter="tag"),
+            ColumnConfig(key="name", label="Name"),
+            ColumnConfig(key="device_count", label="Devices", width="100px", formatter="number"),
+        ],
+    ),
+    "list_devices": DisplayHints(
+        render_type="table",
+        title="Device List",
+        columns=[
+            ColumnConfig(key="brand_name", label="Brand Name", truncate=50),
+            ColumnConfig(key="company_name", label="Manufacturer", truncate=40),
+            ColumnConfig(key="version_model_number", label="Model", truncate=30),
+            ColumnConfig(key="primary_di", label="Device Identifier", truncate=30),
+        ],
+    ),
+    "resolve_manufacturer": DisplayHints(
+        render_type="table",
+        title="Manufacturers",
+        columns=[
+            ColumnConfig(key="name", label="Manufacturer"),
+            ColumnConfig(key="device_count", label="Device Count", width="120px", formatter="number"),
+        ],
+        nested_table=NestedTableConfig(
+            data_key="top_product_codes",
+            columns=[
+                ColumnConfig(key="code", label="Code", width="80px", formatter="tag"),
+                ColumnConfig(key="name", label="Device Category"),
+                ColumnConfig(key="device_class", label="Class", width="60px", formatter="tag",
+                            tag_color_map={"1": "green", "2": "yellow", "3": "red"}),
+                ColumnConfig(key="device_count", label="Devices", width="100px", formatter="number"),
+            ],
+        ),
+    ),
+    "resolve_location": DisplayHints(
+        render_type="summary_cards",
+        title="Location Context",
+        summary_fields=["location_name", "location_type", "total_establishments"],
+    ),
+    "search_recalls": DisplayHints(
+        render_type="table",
+        title="Recalls",
+        columns=[
+            ColumnConfig(key="recall_initiation_date", label="Date", width="100px"),
+            ColumnConfig(key="classification", label="Class", width="80px", formatter="tag",
+                        tag_color_map={"Class I": "red", "Class II": "orange", "Class III": "yellow"}),
+            ColumnConfig(key="status", label="Status", width="100px", formatter="tag",
+                        tag_color_map={"Ongoing": "red", "Terminated": "green"}),
+            ColumnConfig(key="recalling_firm", label="Firm", truncate=40),
+            ColumnConfig(key="product_description", label="Product", truncate=50),
+            ColumnConfig(key="reason_for_recall", label="Reason", truncate=60),
+        ],
+        default_sort="recall_initiation_date",
+    ),
+    "search_events": DisplayHints(
+        render_type="table",
+        title="Adverse Events",
+        columns=[
+            ColumnConfig(key="date_received", label="Date", width="100px"),
+            ColumnConfig(key="event_type", label="Type", width="100px", formatter="tag",
+                        tag_color_map={"Death": "red", "Injury": "orange", "Malfunction": "yellow"}),
+            ColumnConfig(key="brand_name", label="Brand", truncate=40),
+            ColumnConfig(key="manufacturer_name", label="Manufacturer", truncate=40),
+        ],
+    ),
+    "search_510k": DisplayHints(
+        render_type="table",
+        title="510(k) Clearances",
+        columns=[
+            ColumnConfig(key="k_number", label="K Number", width="100px"),
+            ColumnConfig(key="decision_date", label="Date", width="100px"),
+            ColumnConfig(key="device_name", label="Device", truncate=50),
+            ColumnConfig(key="applicant", label="Applicant", truncate=40),
+            ColumnConfig(key="decision_description", label="Decision", width="120px"),
+        ],
+    ),
+    "search_pma": DisplayHints(
+        render_type="table",
+        title="PMA Approvals",
+        columns=[
+            ColumnConfig(key="pma_number", label="PMA Number", width="110px"),
+            ColumnConfig(key="decision_date", label="Date", width="100px"),
+            ColumnConfig(key="trade_name", label="Trade Name", truncate=40),
+            ColumnConfig(key="applicant", label="Applicant", truncate=40),
+            ColumnConfig(key="decision_code", label="Decision", width="80px"),
+        ],
+    ),
+    "search_classifications": DisplayHints(
+        render_type="table",
+        title="Device Classifications",
+        columns=[
+            ColumnConfig(key="product_code", label="Code", width="80px", formatter="tag"),
+            ColumnConfig(key="device_name", label="Device Name", truncate=50),
+            ColumnConfig(key="device_class", label="Class", width="60px", formatter="tag",
+                        tag_color_map={"1": "green", "2": "yellow", "3": "red"}),
+            ColumnConfig(key="regulation_number", label="Regulation", width="100px"),
+            ColumnConfig(key="medical_specialty", label="Specialty", truncate=30),
+        ],
+    ),
+    "search_udi": DisplayHints(
+        render_type="table",
+        title="UDI Records",
+        columns=[
+            ColumnConfig(key="brand_name", label="Brand", truncate=40),
+            ColumnConfig(key="company_name", label="Company", truncate=40),
+            ColumnConfig(key="version_model_number", label="Model", truncate=30),
+            ColumnConfig(key="mri_safety", label="MRI Safety", width="100px"),
+            ColumnConfig(key="primary_di", label="DI", truncate=30),
+        ],
+    ),
+    "search_registrations": DisplayHints(
+        render_type="table",
+        title="Registrations",
+        columns=[
+            ColumnConfig(key="name", label="Establishment", truncate=50),
+            ColumnConfig(key="city", label="City", truncate=30),
+            ColumnConfig(key="state_code", label="State", width="60px"),
+            ColumnConfig(key="country_code", label="Country", width="80px"),
+        ],
+    ),
+    "aggregate_registrations": DisplayHints(
+        render_type="table",
+        title="Manufacturer Locations by Country",
+        columns=[
+            ColumnConfig(key="country", label="Country", width="100px"),
+            ColumnConfig(key="count", label="Establishments", formatter="number"),
+        ],
+    ),
+}
+
+TOOL_ARTIFACT_TYPES: dict[str, ArtifactType] = {
+    "resolve_device": "resolved_entities",
+    "list_devices": "device_list",
+    "resolve_manufacturer": "manufacturers_list",
+    "resolve_location": "location_context",
+    "search_recalls": "recall_search_result",
+    "search_events": "event_search_result",
+    "search_510k": "clearance_search_result",
+    "search_pma": "pma_search_result",
+    "search_classifications": "classification_search_result",
+    "search_udi": "udi_search_result",
+    "search_registrations": "registration_search_result",
+    "aggregate_registrations": "aggregated_registrations",
+}
 
 
 def _merge_context(existing: Optional[dict], new: Optional[dict]) -> dict:
@@ -353,6 +504,14 @@ class ContextAwareToolNode:
                     tool_name=tool_name,
                     tool_args=tool_args_map.get(tool_name, {})
                 ))
+            elif tool_name == "list_devices":
+                artifacts.append(DataArtifact(
+                    type="device_list",
+                    description=f"Devices for product code '{result.product_code}'",
+                    data=result,
+                    tool_name=tool_name,
+                    tool_args=tool_args_map.get(tool_name, {})
+                ))
             elif tool_name == "aggregate_registrations":
                 # New artifact type!
                 query_term = result.get("query") or str(result.get("product_codes", "Unknown"))
@@ -457,6 +616,7 @@ class FDAAgent:
 
         # Create ALL tools (needed for resolver_tools mapping)
         self._device_resolver = DeviceResolverTool(db_path=config.gudid_db_path)
+        self._device_list_tool = DeviceListTool(db_path=config.gudid_db_path)
         self._manufacturer_resolver = ManufacturerResolverTool(db_path=config.gudid_db_path)
         self._recalls_tool = SearchRecallsTool(api_key=fda_api_key)
         self._events_tool = SearchEventsTool(api_key=fda_api_key)
@@ -466,6 +626,7 @@ class FDAAgent:
 
         self._resolver_tools = {
             "resolve_device": self._device_resolver,
+            "list_devices": self._device_list_tool,
             "resolve_manufacturer": self._manufacturer_resolver,
             "resolve_location": self._location_resolver,
         }
@@ -473,6 +634,7 @@ class FDAAgent:
         # Map of all available tools by name
         all_tools_map = {
             "resolve_device": self._device_resolver,
+            "list_devices": self._device_list_tool,
             "resolve_manufacturer": self._manufacturer_resolver,
             "search_events": self._events_tool,
             "search_recalls": self._recalls_tool,

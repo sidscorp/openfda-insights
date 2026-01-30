@@ -69,7 +69,7 @@ class AIConfig(BaseModel):
     @validator("provider")
     def validate_provider(cls, v):
         """Validate AI provider"""
-        allowed_providers = ["openai", "anthropic", "openrouter", "huggingface"]
+        allowed_providers = ["openai", "anthropic", "openrouter", "fireworks", "huggingface"]
         if v not in allowed_providers:
             raise ValueError(f"AI provider must be one of: {allowed_providers}")
         return v
@@ -444,7 +444,7 @@ class Config(BaseSettings):
     semantic_embeddings_dir: Optional[str] = Field(default=None, env="SEMANTIC_EMBEDDINGS_DIR")
     semantic_synonym_threshold: float = Field(default=0.75, env="SEMANTIC_SYNONYM_THRESHOLD", ge=0.0, le=1.0)
     semantic_device_threshold: float = Field(default=0.60, env="SEMANTIC_DEVICE_THRESHOLD", ge=0.0, le=1.0)
-    semantic_manufacturer_threshold: float = Field(default=0.65, env="SEMANTIC_MANUFACTURER_THRESHOLD", ge=0.0, le=1.0)
+    semantic_manufacturer_threshold: float = Field(default=0.80, env="SEMANTIC_MANUFACTURER_THRESHOLD", ge=0.0, le=1.0)
     semantic_cache_size: int = Field(default=100, env="SEMANTIC_CACHE_SIZE", ge=1, le=10000)
     semantic_cache_ttl: int = Field(default=3600, env="SEMANTIC_CACHE_TTL", ge=60, le=86400)
 

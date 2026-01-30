@@ -2,24 +2,28 @@
 Query Router - Fast LLM that classifies queries and determines required tools.
 """
 import json
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 from langchain_core.messages import HumanMessage, SystemMessage
 from ..llm_factory import LLMFactory
 
 
 TOOL_SETS = {
-    "device_lookup": ["resolve_device"],
-    "recall_search": ["resolve_device", "search_recalls"],
-    "event_search": ["resolve_device", "search_events"],
-    "geographic": ["resolve_location", "search_events", "search_recalls"],
-    "comparison": ["resolve_device", "search_events", "search_recalls"],
-    "regulatory": ["resolve_device", "search_classifications", "search_510k"],
-    "clearance_510k": ["resolve_device", "search_510k"],
-    "pma": ["resolve_device", "search_pma"],
-    "manufacturer": ["resolve_manufacturer", "search_events", "search_recalls"],
-    "registration": ["search_registrations", "aggregate_registrations"],
+    "device_lookup": ["resolve_device", "list_devices"],
+    "recall_search": ["resolve_device", "list_devices", "search_recalls"],
+    "event_search": ["resolve_device", "list_devices", "search_events"],
+    "geographic": ["resolve_device", "resolve_location", "aggregate_registrations", "search_registrations", "search_events", "search_recalls"],
+    "comparison": ["resolve_device", "list_devices", "search_events", "search_recalls"],
+    "regulatory": ["resolve_device", "list_devices", "search_classifications", "search_510k"],
+    "clearance_510k": ["resolve_device", "list_devices", "search_510k"],
+    "pma": ["resolve_device", "list_devices", "search_pma"],
+    "manufacturer": ["resolve_device", "resolve_manufacturer", "aggregate_registrations", "list_devices", "search_events", "search_recalls"],
+    "registration": ["resolve_device", "search_registrations", "aggregate_registrations"],
     "comprehensive": [
         "resolve_device",
+        "list_devices",
         "resolve_manufacturer",
         "resolve_location",
         "search_events",
@@ -39,9 +43,9 @@ Your job is to classify the user's question into ONE category and return the req
 
 Categories and their tools:
 
-1. **device_lookup**: Questions about what a product code is, device definitions
-   - Tools: resolve_device
-   - Examples: "What is product code MSH?", "What devices are FXX?"
+1. **device_lookup**: Questions about product codes, device definitions, or listing specific devices
+   - Tools: resolve_device, list_devices
+   - Examples: "What is product code MSH?", "What devices are FXX?", "Show me devices for code QAB"
 
 2. **recall_search**: Questions about recalls, enforcement actions
    - Tools: resolve_device, search_recalls
@@ -51,9 +55,9 @@ Categories and their tools:
    - Tools: resolve_device, search_events
    - Examples: "Show adverse events for pacemakers", "Safety issues with masks"
 
-4. **geographic**: Questions about devices from specific countries or regions
-   - Tools: resolve_location, search_events, search_recalls
-   - Examples: "Devices from China", "Recalls from Germany", "Events from EU"
+4. **geographic**: Questions about devices by country/region, manufacturer locations, country rankings
+   - Tools: resolve_device, resolve_location, aggregate_registrations, search_registrations, search_events, search_recalls
+   - Examples: "Which country makes the most masks?", "Devices from China", "Top manufacturers by country", "Where are ventilator manufacturers located?"
 
 5. **comparison**: Comparing multiple devices or manufacturers
    - Tools: resolve_device, search_events, search_recalls
@@ -71,13 +75,13 @@ Categories and their tools:
    - Tools: resolve_device, search_pma
    - Examples: "PMA approvals for X", "Has Y been approved via PMA?"
 
-9. **manufacturer**: Questions focused on manufacturer/company information
-   - Tools: resolve_manufacturer, search_events, search_recalls
-   - Examples: "What does 3M make?", "Show me Medtronic devices"
+9. **manufacturer**: Questions about specific manufacturers, top manufacturers, manufacturer rankings
+   - Tools: resolve_device, resolve_manufacturer, aggregate_registrations, list_devices, search_events, search_recalls
+   - Examples: "Who are the top manufacturers of X?", "What does 3M make?", "Show me Medtronic devices"
 
-10. **registration**: Questions about manufacturer registrations, facility counts
-    - Tools: search_registrations, aggregate_registrations
-    - Examples: "How many manufacturers make X?", "Registration data for Y"
+10. **registration**: Questions about FDA establishment registrations, facility data
+    - Tools: resolve_device, search_registrations, aggregate_registrations
+    - Examples: "Where is company X registered?", "Registration data for Y"
 
 11. **comprehensive**: Complex questions needing multiple tool types or unclear intent
     - Tools: All 11 tools
@@ -97,17 +101,17 @@ Be decisive. Choose the MOST specific category that fits. Default to comprehensi
 class QueryRouter:
     """Fast LLM router that classifies queries and determines required tools."""
 
-    def __init__(self, model: str = "xiaomi/mimo-v2-flash:free", provider: str = "openrouter"):
+    def __init__(self, model: str = None, provider: str = "fireworks"):
         """
         Initialize the query router with a fast LLM.
 
         Args:
-            model: Fast model for classification (default: xiaomi/mimo-v2-flash:free)
-            provider: LLM provider
+            model: Model for classification (defaults to provider's default from LLMFactory)
+            provider: LLM provider (default: fireworks)
         """
         self.llm = LLMFactory.create(
             provider=provider,
-            model=model,
+            model=model,  # None means use LLMFactory.PROVIDER_DEFAULTS
             temperature=0,  # Deterministic classification
         )
 
@@ -139,8 +143,7 @@ class QueryRouter:
             return tools
 
         except (json.JSONDecodeError, KeyError, AttributeError) as e:
-            # If parsing fails, default to comprehensive
-            print(f"Router parsing error: {e}. Defaulting to comprehensive tools.")
+            logger.warning("Router parsing error: %s. Defaulting to comprehensive tools.", e)
             return TOOL_SETS["comprehensive"]
 
     async def route_async(self, query: str) -> list[str]:
@@ -159,7 +162,7 @@ class QueryRouter:
             return tools
 
         except (json.JSONDecodeError, KeyError, AttributeError) as e:
-            print(f"Router parsing error: {e}. Defaulting to comprehensive tools.")
+            logger.warning("Router parsing error: %s. Defaulting to comprehensive tools.", e)
             return TOOL_SETS["comprehensive"]
 
     def get_category_for_query(self, query: str) -> dict:

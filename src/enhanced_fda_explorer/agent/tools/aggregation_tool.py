@@ -51,10 +51,15 @@ class AggregateRegistrationsInput(BaseModel):
 
 class AggregateRegistrationsTool(BaseTool):
     name: str = "aggregate_registrations"
-    description: str = """Aggregate registration counts by country (and optionally by product code) for a device term.
-Uses OpenFDA registrationlisting count endpoints; does NOT loop per record.
-Can also return sample establishment locations when include_establishments=true.
-Best for questions like "mask manufacturers by country" or "per product code country counts"."""
+    description: str = """Get manufacturer establishment counts BY COUNTRY for a device type.
+**USE THIS TOOL** for geographic manufacturer questions:
+- "Which country manufactures the most X?" → aggregate_registrations(query="X")
+- "Where are X manufacturers located?"
+- "Top countries for X manufacturing"
+- "Manufacturers by country for X"
+
+Returns: Country-level counts (e.g., CN: 1657, US: 741) from FDA registration data.
+Can include sample establishment locations when include_establishments=true."""
     args_schema: Type[BaseModel] = AggregateRegistrationsInput
 
     _client: OpenFDAClient
@@ -89,17 +94,25 @@ Best for questions like "mask manufacturers by country" or "per product code cou
         structured_data = {
             "query": query,
             "product_codes": product_codes,
-            "aggregations": []
+            "aggregations": [],
+            "records": [],
+            "total_establishments": 0,
+            "countries_count": 0,
         }
 
         # Country rollup for the query as a whole.
+        primary_counts = []
         if search_base:
             country_counts = self._count("registration.iso_country_code", search_base)
+            primary_counts = country_counts
             structured_data["aggregations"].append({
                 "type": "query_country_counts",
                 "filter": query,
                 "counts": country_counts
             })
+            structured_data["total_establishments"] = sum(c['count'] for c in country_counts) if country_counts else 0
+            structured_data["countries_count"] = len(country_counts) if country_counts else 0
+            structured_data["records"] = [{"country": c['term'], "count": c['count']} for c in country_counts[:max_countries]]
             lines.append(f"Country counts for '{query}' registrations:")
             if country_counts:
                 for c in country_counts[:max_countries]:
@@ -110,6 +123,7 @@ Best for questions like "mask manufacturers by country" or "per product code cou
 
         # Per-product-code country rollups.
         if product_codes:
+            all_code_counts = []
             for code in product_codes:
                 search = search_base
                 if search:
@@ -118,6 +132,7 @@ Best for questions like "mask manufacturers by country" or "per product code cou
                     search = f"products.product_code:{code}"
 
                 country_counts = self._count("registration.iso_country_code", search)
+                all_code_counts.extend(country_counts)
                 structured_data["aggregations"].append({
                     "type": "product_code_country_counts",
                     "filter": code,
@@ -130,6 +145,15 @@ Best for questions like "mask manufacturers by country" or "per product code cou
                 else:
                     lines.append("  No countries found for this product code.")
                 lines.append("")
+
+            if not search_base and all_code_counts:
+                structured_data["total_establishments"] = sum(c['count'] for c in all_code_counts)
+                structured_data["countries_count"] = len(set(c['term'] for c in all_code_counts))
+                country_totals = {}
+                for c in all_code_counts:
+                    country_totals[c['term']] = country_totals.get(c['term'], 0) + c['count']
+                sorted_countries = sorted(country_totals.items(), key=lambda x: x[1], reverse=True)
+                structured_data["records"] = [{"country": k, "count": v} for k, v in sorted_countries[:max_countries]]
 
         if include_establishments and search_base:
             lines.append(f"Sample establishments for '{query}' (first {max_establishments} results):")

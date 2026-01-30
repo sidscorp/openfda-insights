@@ -9,6 +9,7 @@ from langchain.tools import BaseTool
 from pydantic import BaseModel, Field, validator
 
 from ...openfda_client import OpenFDAClient, HybridAggregationResult
+from ...models.responses import Clearance510kSearchResult, Clearance510kRecord, AggregationCount
 
 CLEARANCES_SERVER_FIELDS = ["advisory_committee_description.exact", "decision.exact"]
 CLEARANCES_CLIENT_EXTRACTORS: Dict[str, Callable[[Dict[str, Any]], Optional[str]]] = {
@@ -63,11 +64,50 @@ class Search510kTool(BaseTool):
 
     _client: OpenFDAClient
     _api_key: Optional[str] = None
+    _last_structured_result: Optional[Clearance510kSearchResult] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._client = OpenFDAClient(api_key=api_key)
+
+    def get_last_structured_result(self) -> Optional[Clearance510kSearchResult]:
+        return self._last_structured_result
+
+    def _to_structured(
+        self,
+        query: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> Clearance510kSearchResult:
+        results = data.get("results", []) or []
+        total = hybrid_result.total_available if hybrid_result else data.get("meta", {}).get("results", {}).get("total", 0)
+        raw_aggs = hybrid_result.aggregations if hybrid_result else {}
+
+        records = [
+            Clearance510kRecord(
+                k_number=c.get("k_number", ""),
+                device_name=c.get("device_name", ""),
+                applicant=c.get("applicant", ""),
+                product_code=c.get("product_code", ""),
+                decision_date=c.get("decision_date", ""),
+                decision_description=c.get("decision_description", ""),
+                statement_or_summary=c.get("statement_or_summary"),
+                clearance_type=c.get("clearance_type"),
+            )
+            for c in results
+        ]
+
+        aggregations = {}
+        for field, items in raw_aggs.items():
+            aggregations[field] = [AggregationCount(term=item["term"], count=item["count"]) for item in items]
+
+        return Clearance510kSearchResult(
+            query=query,
+            total_found=total,
+            records=records,
+            aggregations=aggregations,
+        )
 
     def _build_search(self, query: str, product_codes: list[str], date_from: str, date_to: str) -> str:
         search_parts = []
@@ -192,10 +232,13 @@ class Search510kTool(BaseTool):
                 sort="decision_date:desc"
             )
 
+            self._last_structured_result = self._to_structured(query, data, hybrid_result)
             return self._format_results(query, data, hybrid_result)
         except ValueError as e:
+            self._last_structured_result = None
             return str(e)
         except Exception as e:
+            self._last_structured_result = None
             if "404" in str(e) or "No results" in str(e):
                 return f"No 510(k) clearances found for '{query}'."
             return f"Error searching 510(k) clearances: {str(e)}"

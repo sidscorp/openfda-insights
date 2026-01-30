@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Box,
   Button,
@@ -18,6 +18,8 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react'
 import { ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
+import { ArtifactRenderer } from './ArtifactRenderer'
+import type { DataArtifact, StructuredData as ArtifactStructuredData } from '@/lib/artifacts'
 
 interface RecallRecord {
   recall_number: string
@@ -27,13 +29,6 @@ interface RecallRecord {
   classification: string
   status: string
   recall_initiation_date: string
-}
-
-interface DeviceRecord {
-  brand_name: string
-  company_name: string
-  device_description?: string
-  product_codes: string[]
 }
 
 interface ProductCodeInfo {
@@ -47,7 +42,7 @@ interface ManufacturerInfo {
   device_count: number
 }
 
-interface StructuredData {
+interface LegacyStructuredData {
   recalls?: {
     query: string
     total_found: number
@@ -60,7 +55,6 @@ interface StructuredData {
     total_devices_matched: number
     product_codes: ProductCodeInfo[]
     manufacturers?: ManufacturerInfo[]
-    devices?: DeviceRecord[]
   }
   events?: {
     query: string
@@ -72,13 +66,16 @@ interface StructuredData {
       manufacturer_name?: string
     }>
   }
+  _artifacts?: DataArtifact[]
 }
+
+type StructuredData = LegacyStructuredData & Partial<ArtifactStructuredData>
 
 interface StructuredDataTableProps {
   data: StructuredData
 }
 
-function RecallsTable({ recalls }: { recalls: NonNullable<StructuredData['recalls']> }) {
+function RecallsTable({ recalls }: { recalls: NonNullable<LegacyStructuredData['recalls']> }) {
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const headerBg = useColorModeValue('gray.50', 'gray.700')
 
@@ -141,7 +138,7 @@ function RecallsTable({ recalls }: { recalls: NonNullable<StructuredData['recall
   )
 }
 
-function DevicesTable({ devices }: { devices: NonNullable<StructuredData['devices']> }) {
+function DevicesTable({ devices }: { devices: NonNullable<LegacyStructuredData['devices']> }) {
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const headerBg = useColorModeValue('gray.50', 'gray.700')
 
@@ -200,7 +197,7 @@ function DevicesTable({ devices }: { devices: NonNullable<StructuredData['device
   )
 }
 
-function EventsTable({ events }: { events: NonNullable<StructuredData['events']> }) {
+function EventsTable({ events }: { events: NonNullable<LegacyStructuredData['events']> }) {
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const headerBg = useColorModeValue('gray.50', 'gray.700')
 
@@ -247,7 +244,7 @@ function EventsTable({ events }: { events: NonNullable<StructuredData['events']>
   )
 }
 
-export function StructuredDataTable({ data }: StructuredDataTableProps) {
+function LegacyDataTable({ data }: { data: LegacyStructuredData }) {
   const [isOpen, setIsOpen] = useState(false)
   const bgColor = useColorModeValue('gray.50', 'gray.800')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
@@ -340,4 +337,31 @@ export function StructuredDataTable({ data }: StructuredDataTableProps) {
       </Collapse>
     </Box>
   )
+}
+
+export function StructuredDataTable({ data }: StructuredDataTableProps) {
+  const artifacts = data._artifacts
+
+  const hasNewArtifacts = artifacts && artifacts.length > 0
+  const hasLegacyData = !hasNewArtifacts && (
+    (data.recalls && data.recalls.records?.length > 0) ||
+    (data.devices && ((data.devices.product_codes?.length ?? 0) > 0 || (data.devices.manufacturers?.length ?? 0) > 0)) ||
+    (data.events && data.events.records?.length > 0)
+  )
+
+  if (hasNewArtifacts) {
+    return (
+      <VStack spacing={0} align="stretch">
+        {artifacts.map((artifact) => (
+          <ArtifactRenderer key={artifact.id} artifact={artifact} />
+        ))}
+      </VStack>
+    )
+  }
+
+  if (hasLegacyData) {
+    return <LegacyDataTable data={data} />
+  }
+
+  return null
 }

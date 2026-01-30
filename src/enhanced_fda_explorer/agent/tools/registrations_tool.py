@@ -8,6 +8,7 @@ from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from ...openfda_client import OpenFDAClient, HybridAggregationResult
+from ...models.responses import RegistrationSearchResult, RegistrationRecord, AggregationCount
 
 REGISTRATIONS_SERVER_FIELDS = ["registration.iso_country_code", "registration.state_code"]
 REGISTRATIONS_CLIENT_EXTRACTORS: Dict[str, Callable[[Dict[str, Any]], Optional[str]]] = {
@@ -30,11 +31,57 @@ class SearchRegistrationsTool(BaseTool):
 
     _client: OpenFDAClient
     _api_key: Optional[str] = None
+    _last_structured_result: Optional[RegistrationSearchResult] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._client = OpenFDAClient(api_key=api_key)
+
+    def get_last_structured_result(self) -> Optional[RegistrationSearchResult]:
+        return self._last_structured_result
+
+    def _to_structured(
+        self,
+        query: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> RegistrationSearchResult:
+        results = data.get("results", []) or []
+        total = hybrid_result.total_available if hybrid_result else data.get("meta", {}).get("results", {}).get("total", 0)
+        raw_aggs = hybrid_result.aggregations if hybrid_result else {}
+
+        records = []
+        for r in results:
+            reg = r.get("registration", {})
+            proprietary_names = []
+            for prod in r.get("products", []):
+                openfda = prod.get("openfda", {})
+                device_name = openfda.get("device_name", "")
+                if device_name and device_name not in proprietary_names:
+                    proprietary_names.append(device_name)
+
+            records.append(RegistrationRecord(
+                registration_number=reg.get("registration_number"),
+                name=reg.get("name", "Unknown"),
+                city=reg.get("city"),
+                state_code=reg.get("state_code"),
+                country_code=reg.get("iso_country_code", "US"),
+                address_line_1=reg.get("address_line_1"),
+                postal_code=reg.get("zip_code"),
+                proprietary_names=proprietary_names[:5],
+            ))
+
+        aggregations = {}
+        for field, items in raw_aggs.items():
+            aggregations[field] = [AggregationCount(term=item["term"], count=item["count"]) for item in items]
+
+        return RegistrationSearchResult(
+            query=query,
+            total_found=total,
+            records=records,
+            aggregations=aggregations,
+        )
 
     def _build_search(self, query: str) -> str:
         return f'registration.name:"{query}" OR proprietary_name:"{query}" OR products.openfda.device_name:"{query}"'
@@ -191,8 +238,10 @@ class SearchRegistrationsTool(BaseTool):
                 params={"search": search, "limit": min(limit, 100)}
             )
 
+            self._last_structured_result = self._to_structured(query, data, hybrid_result)
             return self._format_results(query, data, hybrid_result)
         except Exception as e:
+            self._last_structured_result = None
             if "404" in str(e) or "No results" in str(e):
                 return f"No registrations found for '{query}'."
             return f"Error searching registrations: {str(e)}"

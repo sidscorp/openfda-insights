@@ -8,6 +8,7 @@ from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from ...openfda_client import OpenFDAClient, HybridAggregationResult
+from ...models.responses import PMASearchResult, PMARecord, AggregationCount
 
 PMA_SERVER_FIELDS = ["advisory_committee_description.exact", "decision_code.exact"]
 PMA_CLIENT_EXTRACTORS: Dict[str, Callable[[Dict[str, Any]], Optional[str]]] = {
@@ -34,11 +35,51 @@ class SearchPMATool(BaseTool):
 
     _client: OpenFDAClient
     _api_key: Optional[str] = None
+    _last_structured_result: Optional[PMASearchResult] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._client = OpenFDAClient(api_key=api_key)
+
+    def get_last_structured_result(self) -> Optional[PMASearchResult]:
+        return self._last_structured_result
+
+    def _to_structured(
+        self,
+        query: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> PMASearchResult:
+        results = data.get("results", []) or []
+        total = hybrid_result.total_available if hybrid_result else data.get("meta", {}).get("results", {}).get("total", 0)
+        raw_aggs = hybrid_result.aggregations if hybrid_result else {}
+
+        records = [
+            PMARecord(
+                pma_number=p.get("pma_number", ""),
+                trade_name=p.get("trade_name"),
+                generic_name=p.get("generic_name"),
+                applicant=p.get("applicant", ""),
+                decision_date=p.get("decision_date", ""),
+                decision_code=p.get("decision_code"),
+                advisory_committee=p.get("advisory_committee_description"),
+                supplement_number=p.get("supplement_number"),
+                product_code=p.get("product_code"),
+            )
+            for p in results
+        ]
+
+        aggregations = {}
+        for field, items in raw_aggs.items():
+            aggregations[field] = [AggregationCount(term=item["term"], count=item["count"]) for item in items]
+
+        return PMASearchResult(
+            query=query,
+            total_found=total,
+            records=records,
+            aggregations=aggregations,
+        )
 
     def _build_search(self, query: str, date_from: str, date_to: str) -> str:
         if query.upper().startswith("P") and len(query) >= 6:
@@ -174,8 +215,10 @@ class SearchPMATool(BaseTool):
                 sort="decision_date:desc"
             )
 
+            self._last_structured_result = self._to_structured(query, data, hybrid_result)
             return self._format_results(query, data, hybrid_result)
         except Exception as e:
+            self._last_structured_result = None
             if "404" in str(e) or "No results" in str(e):
                 return f"No PMA approvals found for '{query}'."
             return f"Error searching PMA approvals: {str(e)}"

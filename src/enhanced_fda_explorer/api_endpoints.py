@@ -4,6 +4,7 @@ FastAPI endpoints for FDA Intelligence Agent with SSE support
 
 import json
 import os
+import re
 import time
 from collections import Counter
 from typing import Optional, List, Dict, Any
@@ -20,19 +21,35 @@ from langgraph.checkpoint.memory import MemorySaver
 from .tools import DeviceResolver
 from .config import get_config
 from .agent import FDAAgent, QueryRouter
+from .agent.fda_agent import TOOL_DISPLAY_HINTS, TOOL_ARTIFACT_TYPES
 from .llm_factory import LLMFactory
 from .openfda_client import OpenFDAClient
 from .models.responses import AgentResponse as StructuredAgentResponse
 from .usage_tracker import get_usage_tracker, UsageTracker
+from .services.classification_cache import ClassificationCache
+from .lookup import lookup_router
+import uuid as uuid_module
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_thinking_tags(text: str) -> str:
+    """Strip <think>...</think> tags from LLM output, including truncated ones."""
+    # First try to match complete <think>...</think> tags
+    result = re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL)
+    # Also strip unclosed <think> tags (happens when response is truncated)
+    result = re.sub(r'<think>.*$', '', result, flags=re.DOTALL)
+    return result.strip()
+
+
+ClassificationCache.load()
 
 USAGE_EXTEND_SECRET = os.environ.get("FDA_USAGE_EXTEND_SECRET", "changeme")
 USAGE_USER_PASSPHRASE = os.environ.get("FDA_USAGE_PASSPHRASE", "")
 USAGE_PASSPHRASE_EXTENSION = int(os.environ.get("FDA_USAGE_PASSPHRASE_EXTENSION", "50"))
 
 # Global instances
-router = QueryRouter()
+router = QueryRouter()  # Uses fireworks provider and default model from LLMFactory
 shared_checkpointer = MemorySaver()
 
 
@@ -56,6 +73,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include the lookup router for simple FDA device/manufacturer reports
+app.include_router(lookup_router, prefix="/api/lookup")
 
 
 @app.middleware("http")
@@ -85,7 +105,7 @@ async def usage_limit_middleware(request: Request, call_next):
 @app.get("/api/health")
 async def health_check(
     llm: bool = Query(default=False, description="Check LLM reachability"),
-    provider: str = Query(default="openrouter"),
+    provider: str = Query(default="fireworks"),
     model: Optional[str] = Query(default=None),
 ):
     status = {"status": "healthy", "timestamp": datetime.now().isoformat()}
@@ -323,7 +343,7 @@ async def resolve_device_get(
 
 class AgentAskRequest(BaseModel):
     question: str = Field(..., description="Question to ask the FDA agent")
-    provider: str = Field(default="openrouter", description="LLM provider (openrouter, bedrock, ollama)")
+    provider: str = Field(default="fireworks", description="LLM provider (fireworks, openrouter, bedrock, ollama)")
     model: Optional[str] = Field(default=None, description="Model to use (defaults to provider default)")
     session_id: Optional[str] = Field(default=None, description="Session ID for multi-turn conversations")
 
@@ -384,7 +404,7 @@ async def agent_ask(request: AgentAskRequest):
 @app.get("/api/agent/ask")
 async def agent_ask_query(
     question: str = Query(..., description="Question to ask the FDA agent"),
-    provider: str = Query(default="openrouter"),
+    provider: str = Query(default="fireworks"),
     model: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
 ):
@@ -429,7 +449,7 @@ async def agent_ask_structured(request: AgentAskRequest):
 @app.get("/api/agent/ask/structured")
 async def agent_ask_structured_query(
     question: str = Query(..., description="Question to ask the FDA agent"),
-    provider: str = Query(default="openrouter"),
+    provider: str = Query(default="fireworks"),
     model: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None),
 ):
@@ -445,7 +465,7 @@ async def agent_ask_structured_query(
 @app.get("/api/agent/ask/{question}")
 async def agent_ask_get(
     question: str,
-    provider: str = Query(default="openrouter"),
+    provider: str = Query(default="fireworks"),
     model: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None)
 ):
@@ -457,7 +477,7 @@ async def agent_ask_get(
 async def agent_stream(
     request: Request,
     question: str,
-    provider: str = Query(default="openrouter"),
+    provider: str = Query(default="fireworks"),
     model: Optional[str] = Query(default=None),
     session_id: Optional[str] = Query(default=None)
 ):
@@ -507,18 +527,70 @@ async def agent_stream(
                     in_final_response = False
 
             structured_data = {}
-            if hasattr(agent, '_recalls_tool') and agent._recalls_tool:
-                recall_result = agent._recalls_tool.get_last_structured_result()
-                if recall_result:
-                    structured_data["recalls"] = recall_result.model_dump() if hasattr(recall_result, 'model_dump') else recall_result
-            if hasattr(agent, '_device_resolver') and agent._device_resolver:
-                device_result = agent._device_resolver.get_last_structured_result()
-                if device_result:
-                    structured_data["devices"] = device_result.model_dump() if hasattr(device_result, 'model_dump') else device_result
-            if hasattr(agent, '_events_tool') and agent._events_tool:
-                events_result = agent._events_tool.get_last_structured_result()
-                if events_result:
-                    structured_data["events"] = events_result.model_dump() if hasattr(events_result, 'model_dump') else events_result
+            artifacts = []
+
+            tool_refs = [
+                ("search_recalls", getattr(agent, '_recalls_tool', None)),
+                ("resolve_device", getattr(agent, '_device_resolver', None)),
+                ("list_devices", getattr(agent, '_device_list_tool', None)),
+                ("search_events", getattr(agent, '_events_tool', None)),
+                ("resolve_manufacturer", getattr(agent, '_manufacturer_resolver', None)),
+                ("resolve_location", getattr(agent, '_location_resolver', None)),
+                ("aggregate_registrations", getattr(agent, '_aggregations_tool', None)),
+                ("search_510k", getattr(agent, '_clearances_tool', None)),
+                ("search_pma", getattr(agent, '_pma_tool', None)),
+                ("search_classifications", getattr(agent, '_classifications_tool', None)),
+                ("search_udi", getattr(agent, '_udi_tool', None)),
+                ("search_registrations", getattr(agent, '_registrations_tool', None)),
+            ]
+
+            legacy_key_map = {
+                "search_recalls": "recalls",
+                "resolve_device": "devices",
+                "list_devices": "device_list",
+                "search_events": "events",
+                "search_510k": "clearances",
+                "search_pma": "pma_approvals",
+                "search_classifications": "classifications",
+                "search_udi": "udi",
+                "search_registrations": "registrations",
+                "resolve_location": "location",
+                "resolve_manufacturer": "manufacturers",
+                "aggregate_registrations": "registration_aggregations",
+            }
+
+            for tool_name, tool in tool_refs:
+                if tool and hasattr(tool, 'get_last_structured_result'):
+                    result = tool.get_last_structured_result()
+                    logger.debug(f"Artifact collection: {tool_name} returned {'data' if result else 'None'}")
+                    if result:
+                        if hasattr(result, 'model_dump'):
+                            data = result.model_dump()
+                        elif isinstance(result, list) and len(result) > 0 and hasattr(result[0], 'model_dump'):
+                            data = [item.model_dump() for item in result]
+                        else:
+                            data = result
+                        legacy_key = legacy_key_map.get(tool_name, tool_name)
+                        structured_data[legacy_key] = data
+
+                        hints = TOOL_DISPLAY_HINTS.get(tool_name)
+                        artifact_type = TOOL_ARTIFACT_TYPES.get(tool_name, "resolved_entities")
+                        total = getattr(result, 'total_found', None) or getattr(result, 'total_devices_matched', 0)
+                        records = getattr(result, 'records', []) if hasattr(result, 'records') else []
+
+                        artifacts.append({
+                            "id": str(uuid_module.uuid4()),
+                            "type": artifact_type,
+                            "tool_name": tool_name,
+                            "data": data,
+                            "display_hints": hints.model_dump() if hints else None,
+                            "total_count": total if isinstance(total, int) else len(result) if isinstance(result, list) else 0,
+                            "records_returned": len(records) if records else (len(result) if isinstance(result, list) else None),
+                        })
+
+            if artifacts:
+                structured_data["_artifacts"] = artifacts
+                logger.info(f"Collected {len(artifacts)} artifacts: {[a['tool_name'] for a in artifacts]}")
 
             try:
                 tracker = get_usage_tracker()
@@ -1370,15 +1442,20 @@ class GenerateTitleRequest(BaseModel):
 async def generate_session_title(request: GenerateTitleRequest):
     """Generate a short title for a session based on first exchange."""
     try:
-        llm = LLMFactory.create(provider="openrouter", temperature=0.3, max_tokens=30)
-        prompt = f"""Generate a very short title (3-5 words, no quotes) summarizing this FDA research conversation:
+        llm = LLMFactory.create(
+            provider="fireworks",
+            model="accounts/fireworks/models/llama-v3p3-70b-instruct",
+            temperature=0.3,
+            max_tokens=30
+        )
+        prompt = f"""Generate a very short title (3-5 words, no quotes) for this FDA conversation:
 
 User: {request.first_user_message[:200]}
 Assistant: {request.first_assistant_response[:300]}
 
 Title:"""
         response = llm.invoke(prompt)
-        title = response.content.strip().strip('"').strip("'")
+        title = _strip_thinking_tags(response.content).strip('"').strip("'")
         if len(title) > 50:
             title = title[:47] + "..."
         return {"title": title}

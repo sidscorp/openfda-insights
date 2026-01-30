@@ -112,6 +112,29 @@ export interface DeviceIntelligence {
   }
 }
 
+// Lookup API types for disambiguation
+export type EntityType = 'device' | 'manufacturer'
+export type IdentifierType = 'product_code' | 'primary_di' | 'fei_number' | 'k_number' | 'pma_number' | 'company_name' | 'device_name'
+
+export interface LookupCandidate {
+  entity_type: EntityType
+  identifier: string
+  identifier_type: IdentifierType
+  display_name: string
+  description?: string
+  device_count?: number
+  device_class?: string  // "1", "2", or "3" for FDA device classification
+}
+
+export interface IdentifyResponse {
+  input: string
+  needs_disambiguation: boolean
+  entity_type?: EntityType
+  identifier?: string
+  identifier_type?: IdentifierType
+  candidates: LookupCandidate[]
+}
+
 export interface DeviceNarrative {
   device_name: string
   summary: {
@@ -322,6 +345,13 @@ class APIClient {
     return this.request<UsageStats>('/usage')
   }
 
+  async identify(input: string): Promise<IdentifyResponse> {
+    return this.request<IdentifyResponse>('/lookup/identify', {
+      method: 'POST',
+      body: JSON.stringify({ input }),
+    })
+  }
+
   async generateSessionTitle(firstUserMessage: string, firstAssistantResponse: string): Promise<{ title: string }> {
     return this.request<{ title: string }>('/sessions/generate-title', {
       method: 'POST',
@@ -338,6 +368,50 @@ class APIClient {
       body: JSON.stringify({ passphrase }),
     })
   }
+
+  async getDeviceReport(identifier: string, type: string = 'product_code'): Promise<DeviceReportResponse> {
+    return this.request<DeviceReportResponse>(
+      `/lookup/device/${encodeURIComponent(identifier)}?type=${encodeURIComponent(type)}`
+    )
+  }
+
+  async getManufacturerReport(identifier: string, type: string = 'company_name'): Promise<ManufacturerReportResponse> {
+    return this.request<ManufacturerReportResponse>(
+      `/lookup/manufacturer/${encodeURIComponent(identifier)}?type=${encodeURIComponent(type)}`
+    )
+  }
+
+  async generateLookupSummary(
+    entityType: string,
+    identifier: string,
+    reportData: DeviceReportResponse | ManufacturerReportResponse
+  ): Promise<SummaryResponse> {
+    return this.request<SummaryResponse>('/lookup/summary', {
+      method: 'POST',
+      body: JSON.stringify({
+        entity_type: entityType,
+        identifier,
+        report_data: reportData,
+      }),
+    })
+  }
+
+  async answerFollowup(
+    entityType: string,
+    identifier: string,
+    reportSummary: string,
+    question: string
+  ): Promise<FollowupResponse> {
+    return this.request<FollowupResponse>('/lookup/followup', {
+      method: 'POST',
+      body: JSON.stringify({
+        entity_type: entityType,
+        identifier,
+        report_summary: reportSummary,
+        question,
+      }),
+    })
+  }
 }
 
 export interface UsageStats {
@@ -349,6 +423,175 @@ export interface UsageStats {
   total_output_tokens: number
   first_request: string | null
   last_request: string | null
+}
+
+// Device Report types
+export interface ClassificationSection {
+  device_class?: string
+  device_name?: string
+  regulation_number?: string
+  submission_type?: string
+  definition?: string
+  medical_specialty?: string
+}
+
+export interface EventTypeCounts {
+  death: number
+  injury: number
+  malfunction: number
+  other: number
+}
+
+export interface EventsSection {
+  total_count: number
+  event_type_counts: EventTypeCounts
+  top_manufacturers: Array<{ name: string; count: number }>
+  recent_events: Array<{
+    report_number?: string
+    event_date?: string
+    event_type?: string
+    device_name?: string
+    manufacturer?: string
+    description?: string
+  }>
+}
+
+export interface RecallClassCounts {
+  class_i: number
+  class_ii: number
+  class_iii: number
+}
+
+export interface RecallsSection {
+  total_count: number
+  class_counts: RecallClassCounts
+  status_counts: Record<string, number>
+  recent_recalls: Array<{
+    recall_number?: string
+    date?: string
+    class?: string
+    status?: string
+    reason?: string
+    product?: string
+  }>
+}
+
+export interface ClearancesSection {
+  total_count: number
+  top_applicants: Array<{ name: string; count: number }>
+  recent_clearances: Array<{
+    k_number?: string
+    date?: string
+    device_name?: string
+    applicant?: string
+    decision?: string
+  }>
+}
+
+export interface MRISafetyCounts {
+  mr_safe: number
+  mr_conditional: number
+  mr_unsafe: number
+  not_specified: number
+}
+
+export interface UDISection {
+  total_count: number
+  mri_safety: MRISafetyCounts
+  sterile_count: number
+  single_use_count: number
+  sample_devices: Array<{
+    brand_name?: string
+    company_name?: string
+    device_description?: string
+  }>
+}
+
+export interface ManufacturerSummary {
+  name: string
+  device_count: number
+}
+
+export interface DeviceReportResponse {
+  identifier: string
+  identifier_type: IdentifierType
+  product_code?: string
+  product_code_name?: string
+  classification?: ClassificationSection
+  events?: EventsSection
+  recalls?: RecallsSection
+  clearances?: ClearancesSection
+  udi?: UDISection
+  top_manufacturers: ManufacturerSummary[]
+}
+
+// Manufacturer Report types
+export interface CompanyInfoSection {
+  name: string
+  name_variations: string[]
+  total_device_count: number
+}
+
+export interface LocationRecord {
+  name: string
+  city?: string
+  state?: string
+  country: string
+  address?: string
+}
+
+export interface LocationsSection {
+  total_count: number
+  countries: Record<string, number>
+  us_states: Record<string, number>
+  locations: LocationRecord[]
+}
+
+export interface ProductCodeSummary {
+  code: string
+  name: string
+  device_count: number
+}
+
+export interface PortfolioSection {
+  total_product_codes: number
+  product_codes: ProductCodeSummary[]
+}
+
+export interface RegulatorySection {
+  total_510k: number
+  total_pma: number
+  recent_510k: Array<{
+    k_number?: string
+    date?: string
+    device_name?: string
+    decision?: string
+  }>
+  recent_pma: Array<{
+    pma_number?: string
+    date?: string
+    trade_name?: string
+    decision?: string
+  }>
+}
+
+export interface ManufacturerReportResponse {
+  identifier: string
+  identifier_type: IdentifierType
+  company_info?: CompanyInfoSection
+  locations?: LocationsSection
+  portfolio?: PortfolioSection
+  events?: EventsSection
+  recalls?: RecallsSection
+  regulatory?: RegulatorySection
+}
+
+export interface SummaryResponse {
+  summary: string
+}
+
+export interface FollowupResponse {
+  answer: string
 }
 
 export interface UsageLimitError {

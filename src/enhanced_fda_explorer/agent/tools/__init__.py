@@ -12,9 +12,11 @@ from .udi_tool import SearchUDITool
 from .registrations_tool import SearchRegistrationsTool
 from .location_resolver import LocationResolverTool
 from .aggregation_tool import AggregateRegistrationsTool
+from .device_list_tool import DeviceListTool
 
 __all__ = [
     "DeviceResolverTool",
+    "DeviceListTool",
     "ManufacturerResolverTool",
     "SearchEventsTool",
     "SearchRecallsTool",

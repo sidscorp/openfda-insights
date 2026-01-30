@@ -18,16 +18,20 @@ import {
   Text,
   Textarea,
   Tooltip,
+  Collapse,
   useColorMode,
   useColorModeValue,
+  useDisclosure,
   useToast,
   VStack,
 } from '@chakra-ui/react'
-import { CheckIcon, CloseIcon, MoonIcon, SunIcon, WarningIcon } from '@chakra-ui/icons'
-import { apiClient, type AgentStreamEvent, type QueryDetail } from '@/lib/api'
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CloseIcon, MoonIcon, SunIcon, WarningIcon, SearchIcon } from '@chakra-ui/icons'
+import NextLink from 'next/link'
+import { apiClient, type AgentStreamEvent, type QueryDetail, type LookupCandidate } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { StructuredDataTable } from '@/components/StructuredDataTable'
+import { DisambiguationView } from '@/components/DisambiguationView'
 import { WorkspaceLayout } from '@/components/WorkspaceLayout'
 import { useSession } from '@/lib/session-context'
 import type { StoredMessage } from '@/lib/storage'
@@ -55,16 +59,16 @@ interface ChatMessage {
 }
 
 const allStarterPrompts = [
-  'What are the product codes for ventilators?',
-  'What FDA product codes are associated with infusion pumps?',
-  'Have there been recent recalls associated with insulin pumps?',
-  'What recalls have been issued for hip implants in the last year?',
-  'What adverse events have been reported for MRI machines?',
-  'What are common malfunctions reported for cochlear implants?',
-  'Which companies received 510(k) clearance for glucose monitors this year?',
+  'Show me recent Class I recalls for infusion pumps',
+  'What adverse events have been reported for hip implants?',
+  'Which companies make pacemakers?',
+  'What product codes cover cardiac monitors?',
+  'Find surgical mask recalls from the past year',
+  'Show me adverse events for cochlear implants',
+  'Who manufactures glucose monitors?',
   'What PMA approvals exist for heart valves?',
-  'What facilities manufacture pacemakers in the United States?',
-  'Who are the top manufacturers of orthopedic implants?',
+  'Find recalls for ventilators in 2024',
+  'Show me defibrillator manufacturers by country',
 ]
 
 function getRandomPrompts(count: number): string[] {
@@ -102,6 +106,10 @@ function ChatArea() {
   const [hasGeneratedTitle, setHasGeneratedTitle] = useState(false)
   const [starterPrompts] = useState(() => getRandomPrompts(3))
   const [pendingQueries, setPendingQueries] = useState<Map<string, QueryDetail[]>>(new Map())
+  const [disambiguationData, setDisambiguationData] = useState<{
+    query: string
+    candidates: LookupCandidate[]
+  } | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasDeltaRef = useRef(false)
   const streamCompletedRef = useRef(false)
@@ -134,7 +142,7 @@ function ChatArea() {
         {
           id: 'system',
           role: 'system',
-          content: 'Welcome to OpenFDA Explorer! I can help you research medical device recalls, adverse events, 510(k) clearances, and manufacturer data. Try the example questions below or ask your own.',
+          content: `Welcome to OpenFDA Explorer! I can help you research:\n\n• **Medical device recalls** and safety alerts\n• **Adverse event reports** from the MAUDE database\n• **510(k) clearances** and PMA approvals\n• **Manufacturer** and facility information\n\nTry the examples below, or use [Quick Lookup](/lookup) for instant device and manufacturer reports.`,
         },
         ...currentMessages.map((m) => ({
           id: m.id,
@@ -152,7 +160,7 @@ function ChatArea() {
         {
           id: 'system',
           role: 'system',
-          content: 'Welcome to OpenFDA Explorer! I can help you research medical device recalls, adverse events, 510(k) clearances, and manufacturer data. Try the example questions below or ask your own.',
+          content: `Welcome to OpenFDA Explorer! I can help you research:\n\n• **Medical device recalls** and safety alerts\n• **Adverse event reports** from the MAUDE database\n• **510(k) clearances** and PMA approvals\n• **Manufacturer** and facility information\n\nTry the examples below, or use [Quick Lookup](/lookup) for instant device and manufacturer reports.`,
         },
       ])
       setHasGeneratedTitle(false)
@@ -200,9 +208,8 @@ function ChatArea() {
     [hasGeneratedTitle, currentSession, updateSessionTitle]
   )
 
-  const handleSend = useCallback(
-    (prompt?: string) => {
-      const text = prompt ?? input.trim()
+  const sendToAgent = useCallback(
+    (text: string) => {
       if (!text || isStreaming || !currentSession) return
 
       const userMessage: ChatMessage = {
@@ -405,7 +412,6 @@ function ChatArea() {
       eventSourceRef.current = es
     },
     [
-      input,
       isStreaming,
       currentSession,
       addMessage,
@@ -413,6 +419,56 @@ function ChatArea() {
       toast,
     ]
   )
+
+  const handleSend = useCallback(
+    async (prompt?: string) => {
+      const text = prompt ?? input.trim()
+      if (!text || isStreaming || !currentSession) return
+
+      // Clear input immediately for responsiveness
+      setInput('')
+
+      // Check if disambiguation is needed
+      try {
+        const identifyResult = await apiClient.identify(text)
+
+        if (identifyResult.needs_disambiguation && identifyResult.candidates.length > 1) {
+          // Show disambiguation UI
+          setDisambiguationData({ query: text, candidates: identifyResult.candidates })
+          return
+        }
+
+        // No disambiguation needed - proceed to agent
+        sendToAgent(text)
+      } catch (e) {
+        // Fallback to agent on identify error
+        console.warn('Identify call failed, falling back to agent:', e)
+        sendToAgent(text)
+      }
+    },
+    [
+      input,
+      isStreaming,
+      currentSession,
+      sendToAgent,
+    ]
+  )
+
+  const handleDisambiguationSelect = useCallback(
+    (candidate: LookupCandidate) => {
+      setDisambiguationData(null)
+      // Send refined query to agent with the specific entity
+      const refinedQuery = candidate.entity_type === 'device'
+        ? `Tell me about product code ${candidate.identifier} (${candidate.display_name})`
+        : `Tell me about manufacturer "${candidate.display_name}"`
+      sendToAgent(refinedQuery)
+    },
+    [sendToAgent]
+  )
+
+  const handleDisambiguationCancel = useCallback(() => {
+    setDisambiguationData(null)
+  }, [])
 
   const handleStop = () => {
     if (eventSourceRef.current) {
@@ -460,6 +516,16 @@ function ChatArea() {
                   </Tag>
                 </Tooltip>
               )}
+              <Button
+                as={NextLink}
+                href="/lookup"
+                leftIcon={<SearchIcon />}
+                variant="outline"
+                size="sm"
+                colorScheme="brand"
+              >
+                Quick Lookup
+              </Button>
               <IconButton
                 aria-label="Toggle color mode"
                 icon={colorMode === 'light' ? <MoonIcon /> : <SunIcon />}
@@ -473,23 +539,43 @@ function ChatArea() {
       </Card>
 
       <VStack flex="1" align="stretch" spacing={4} p={4} overflowY="auto">
-        {messages.map((m) => (
-          <Box key={m.id}>
-            <MessageBubble message={m} />
-            {m.id === activeUserMessageId && streamStatus && (
-              <ThinkingPanel
-                isStreaming={isStreaming}
-                streamSeconds={streamSeconds}
-                phase={streamStatus.phase}
-                errorMessage={errorMessage}
-                toolHistory={toolHistory}
-                currentTool={currentTool}
-                toolCallsDone={toolCallsDone}
-                toolCallsTotal={toolCallsTotal}
-              />
-            )}
+        {disambiguationData ? (
+          <Box>
+            <DisambiguationView
+              query={disambiguationData.query}
+              candidates={disambiguationData.candidates}
+              onSelect={handleDisambiguationSelect}
+            />
+            <Button
+              mt={4}
+              variant="ghost"
+              size="sm"
+              onClick={handleDisambiguationCancel}
+            >
+              Cancel and search differently
+            </Button>
           </Box>
-        ))}
+        ) : (
+          <>
+            {messages.map((m) => (
+              <Box key={m.id}>
+                <MessageBubble message={m} />
+                {m.id === activeUserMessageId && streamStatus && (
+                  <ThinkingPanel
+                    isStreaming={isStreaming}
+                    streamSeconds={streamSeconds}
+                    phase={streamStatus.phase}
+                    errorMessage={errorMessage}
+                    toolHistory={toolHistory}
+                    currentTool={currentTool}
+                    toolCallsDone={toolCallsDone}
+                    toolCallsTotal={toolCallsTotal}
+                  />
+                )}
+              </Box>
+            ))}
+          </>
+        )}
         <div ref={endOfChatRef} />
       </VStack>
 
@@ -705,9 +791,26 @@ function ThinkingPanel({
   )
 }
 
+function parseThinkingContent(content: string): { thinking: string | null; main: string } {
+  // Match complete <think>...</think> blocks
+  const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/)
+  if (thinkMatch) {
+    const thinking = thinkMatch[1].trim()
+    const main = content.replace(/<think>[\s\S]*?<\/think>\s*/, '').trim()
+    return { thinking, main }
+  }
+  // Match unclosed <think> tags (streaming/truncated)
+  const unclosedMatch = content.match(/<think>([\s\S]*)$/)
+  if (unclosedMatch) {
+    return { thinking: unclosedMatch[1].trim(), main: '' }
+  }
+  return { thinking: null, main: content }
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
+  const { isOpen: isThinkingOpen, onToggle: onThinkingToggle } = useDisclosure({ defaultIsOpen: false })
   const userBg = useColorModeValue('brand.50', 'brand.900')
   const assistantBg = useColorModeValue('white', 'gray.700')
   const systemBg = useColorModeValue('gray.50', 'gray.750')
@@ -717,8 +820,16 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   const contentColor = useColorModeValue('gray.800', 'gray.100')
   const strongColor = useColorModeValue('gray.900', 'white')
   const codeBackground = useColorModeValue('orange.50', 'whiteAlpha.200')
+  const thinkingBg = useColorModeValue('purple.50', 'purple.900')
+  const thinkingBorder = useColorModeValue('purple.200', 'purple.700')
+  const thinkingText = useColorModeValue('purple.700', 'purple.200')
   const bg = isUser ? userBg : isSystem ? systemBg : assistantBg
   const border = isUser ? userBorder : isSystem ? systemBorder : assistantBorder
+
+  const { thinking, main } = useMemo(
+    () => (message.role === 'assistant' ? parseThinkingContent(message.content) : { thinking: null, main: message.content }),
+    [message.content, message.role]
+  )
 
   return (
     <Box
@@ -740,6 +851,40 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         </Tag>
         {message.streaming && <Spinner size="sm" color="brand.500" />}
       </HStack>
+
+      {thinking && (
+        <Box mb={3}>
+          <HStack
+            spacing={1}
+            cursor="pointer"
+            onClick={onThinkingToggle}
+            color={thinkingText}
+            fontSize="sm"
+            fontWeight="500"
+            _hover={{ opacity: 0.8 }}
+          >
+            {isThinkingOpen ? <ChevronUpIcon boxSize={4} /> : <ChevronDownIcon boxSize={4} />}
+            <Text>💭 Reasoning {message.streaming && !main ? '...' : ''}</Text>
+          </HStack>
+          <Collapse in={isThinkingOpen} animateOpacity>
+            <Box
+              mt={2}
+              p={3}
+              bg={thinkingBg}
+              borderWidth="1px"
+              borderColor={thinkingBorder}
+              borderRadius="md"
+              fontSize="sm"
+              fontStyle="italic"
+              color={thinkingText}
+              whiteSpace="pre-wrap"
+            >
+              {thinking}
+            </Box>
+          </Collapse>
+        </Box>
+      )}
+
       <Box
         color={contentColor}
         sx={{
@@ -760,7 +905,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           h3: { fontSize: '1rem', fontWeight: 700, marginBottom: 2 },
         }}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || '...'}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{main || (thinking ? '' : '...')}</ReactMarkdown>
         {!isUser && message.role !== 'system' && message.streaming && (
           <Box
             as="span"
@@ -775,7 +920,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           />
         )}
       </Box>
-      {!isUser && message.role !== 'system' && message.streaming && (
+      {!isUser && message.role !== 'system' && message.streaming && !thinking && (
         <Text mt={2} fontSize="sm" color="orange.600">
           Thinking...
         </Text>

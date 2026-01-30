@@ -27,7 +27,6 @@ export default function SearchForm({ onResults, onLoading, onNarrative, onAgentP
       if (queryType === 'device' && includeAI) {
         // Use parent's agent progress handler if available
         if (onAgentProgress) {
-          console.log('Showing agent progress for:', query)
           onAgentProgress(true, query)
           onLoading(false)  // Hide simple spinner
           

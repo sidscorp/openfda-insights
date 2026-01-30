@@ -9,6 +9,7 @@ from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from ...openfda_client import OpenFDAClient, HybridAggregationResult
+from ...models.responses import ClassificationSearchResult, ClassificationRecord, AggregationCount
 
 CLASSIFICATION_SERVER_FIELDS = ["medical_specialty_description.exact", "device_class.exact"]
 CLASSIFICATION_CLIENT_EXTRACTORS: Dict[str, Callable[[Dict[str, Any]], Optional[str]]] = {
@@ -34,11 +35,50 @@ class SearchClassificationsTool(BaseTool):
 
     _client: OpenFDAClient
     _api_key: Optional[str] = None
+    _last_structured_result: Optional[ClassificationSearchResult] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._client = OpenFDAClient(api_key=api_key)
+
+    def get_last_structured_result(self) -> Optional[ClassificationSearchResult]:
+        return self._last_structured_result
+
+    def _to_structured(
+        self,
+        query: str,
+        data: dict,
+        hybrid_result: Optional[HybridAggregationResult] = None,
+    ) -> ClassificationSearchResult:
+        results = data.get("results", []) or []
+        total = hybrid_result.total_available if hybrid_result else data.get("meta", {}).get("results", {}).get("total", 0)
+        raw_aggs = hybrid_result.aggregations if hybrid_result else {}
+
+        records = []
+        for c in results:
+            openfda = c.get("openfda", {})
+            specialty = openfda.get("medical_specialty_description", [""])[0] if isinstance(openfda.get("medical_specialty_description"), list) else openfda.get("medical_specialty_description", "")
+            records.append(ClassificationRecord(
+                product_code=c.get("product_code", ""),
+                device_name=c.get("device_name", ""),
+                device_class=c.get("device_class", ""),
+                regulation_number=c.get("regulation_number"),
+                submission_type=c.get("submission_type_id"),
+                definition=c.get("definition"),
+                medical_specialty=specialty,
+            ))
+
+        aggregations = {}
+        for field, items in raw_aggs.items():
+            aggregations[field] = [AggregationCount(term=item["term"], count=item["count"]) for item in items]
+
+        return ClassificationSearchResult(
+            query=query,
+            total_found=total,
+            records=records,
+            aggregations=aggregations,
+        )
 
     def _build_search(self, query: str) -> str:
         if re.match(r'^[A-Z]{3}$', query.upper()):
@@ -176,8 +216,10 @@ class SearchClassificationsTool(BaseTool):
                 params={"search": search, "limit": min(limit, 100)}
             )
 
+            self._last_structured_result = self._to_structured(query, data, hybrid_result)
             return self._format_results(query, data, hybrid_result)
         except Exception as e:
+            self._last_structured_result = None
             if "404" in str(e) or "No results" in str(e):
                 return f"No classifications found for '{query}'."
             return f"Error searching classifications: {str(e)}"

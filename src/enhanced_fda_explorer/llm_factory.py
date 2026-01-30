@@ -11,6 +11,7 @@ class LLMFactory:
 
     PROVIDER_DEFAULTS = {
         "openrouter": "xiaomi/mimo-v2-flash:free",
+        "fireworks": "accounts/fireworks/models/qwen3-8b",  # Supports tool calling
         "bedrock": "anthropic.claude-3-haiku-20240307-v1:0",
         "ollama": "llama3.1",
     }
@@ -39,12 +40,14 @@ class LLMFactory:
 
         if provider == "openrouter":
             return cls._create_openrouter(model, temperature, **kwargs)
+        elif provider == "fireworks":
+            return cls._create_fireworks(model, temperature, **kwargs)
         elif provider == "bedrock":
             return cls._create_bedrock(model, temperature, **kwargs)
         elif provider == "ollama":
             return cls._create_ollama(model, temperature, **kwargs)
         else:
-            raise ValueError(f"Unknown provider: {provider}. Supported: openrouter, bedrock, ollama")
+            raise ValueError(f"Unknown provider: {provider}. Supported: openrouter, fireworks, bedrock, ollama")
 
     @classmethod
     def _create_openrouter(cls, model: str, temperature: float, **kwargs) -> BaseChatModel:
@@ -64,6 +67,30 @@ class LLMFactory:
         return ChatOpenAI(
             model=model,
             base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=kwargs.get("max_tokens"),
+            timeout=kwargs.get("timeout"),
+        )
+
+    @classmethod
+    def _create_fireworks(cls, model: str, temperature: float, **kwargs) -> BaseChatModel:
+        """Create Fireworks LLM via OpenAI-compatible API."""
+        from langchain_openai import ChatOpenAI
+        from .config import get_config
+
+        config = get_config(validate_startup=False)
+        api_key = (
+            os.getenv("FIREWORKS_API_KEY")
+            or os.getenv("AI_API_KEY")
+            or config.ai.api_key
+        )
+        if not api_key:
+            raise ValueError("FIREWORKS_API_KEY or AI_API_KEY environment variable required")
+
+        return ChatOpenAI(
+            model=model,
+            base_url="https://api.fireworks.ai/inference/v1",
             api_key=api_key,
             temperature=temperature,
             max_tokens=kwargs.get("max_tokens"),

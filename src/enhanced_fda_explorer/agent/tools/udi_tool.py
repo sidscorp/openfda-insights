@@ -7,6 +7,7 @@ from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from ...openfda_client import OpenFDAClient
+from ...models.responses import UDISearchResult, UDIRecord, AggregationCount
 
 
 class SearchUDIInput(BaseModel):
@@ -24,11 +25,56 @@ class SearchUDITool(BaseTool):
 
     _client: OpenFDAClient
     _api_key: Optional[str] = None
+    _last_structured_result: Optional[UDISearchResult] = None
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self._api_key = api_key
         self._client = OpenFDAClient(api_key=api_key)
+
+    def get_last_structured_result(self) -> Optional[UDISearchResult]:
+        return self._last_structured_result
+
+    def _to_structured(self, query: str, data: dict) -> UDISearchResult:
+        results = data.get("results", []) or []
+        total = data.get("meta", {}).get("results", {}).get("total", 0)
+
+        records = []
+        company_counts: Counter = Counter()
+        for d in results:
+            company = d.get("company_name", "Unknown")
+            company_counts[company] += 1
+
+            primary_di = None
+            identifiers = d.get("identifiers", [])
+            if identifiers:
+                for ident in identifiers:
+                    if ident.get("id_type") == "Primary":
+                        primary_di = ident.get("id")
+                        break
+
+            records.append(UDIRecord(
+                brand_name=d.get("brand_name"),
+                company_name=d.get("company_name"),
+                version_model_number=d.get("version_or_model_number"),
+                primary_di=primary_di,
+                mri_safety=d.get("mri_safety"),
+                device_description=d.get("device_description"),
+                is_sterile=d.get("is_sterile", False),
+                is_single_use=d.get("is_single_use"),
+                device_count_in_base_package=d.get("device_count_in_base_package"),
+            ))
+
+        aggregations = {
+            "company_name": [AggregationCount(term=name, count=count) for name, count in company_counts.most_common(10)]
+        }
+
+        return UDISearchResult(
+            query=query,
+            total_found=total,
+            records=records,
+            aggregations=aggregations,
+        )
 
     def _build_search(self, query: str) -> str:
         return f'(brand_name:"{query}" OR company_name:"{query}" OR version_or_model_number:"{query}")'
@@ -40,8 +86,10 @@ class SearchUDITool(BaseTool):
                 "device/udi.json",
                 params={"search": search, "limit": min(limit, 100)}
             )
+            self._last_structured_result = self._to_structured(query, data)
             return self._format_results(query, data)
         except Exception as e:
+            self._last_structured_result = None
             if "404" in str(e) or "No results" in str(e):
                 return f"No UDI records found for '{query}'."
             return f"Error searching UDI database: {str(e)}"
@@ -122,8 +170,10 @@ class SearchUDITool(BaseTool):
                 "device/udi.json",
                 params={"search": search, "limit": min(limit, 100)}
             )
+            self._last_structured_result = self._to_structured(query, data)
             return self._format_results(query, data)
         except Exception as e:
+            self._last_structured_result = None
             if "404" in str(e) or "No results" in str(e):
                 return f"No UDI records found for '{query}'."
             return f"Error searching UDI database: {str(e)}"

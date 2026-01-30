@@ -6,15 +6,15 @@ persisted in the agent's state for later reference and display.
 """
 import uuid
 from datetime import datetime
-from typing import Literal, Any
+from typing import Literal, Any, Optional
 from pydantic import BaseModel, Field
 
 
-# Define literal types for different artifact categories for clarity
 ArtifactType = Literal[
     "resolved_entities",
-    "manufacturers_list", # Derived from resolved_entities manufacturers
-    "product_codes_list", # Derived from resolved_entities product_codes
+    "device_list",
+    "manufacturers_list",
+    "product_codes_list",
     "location_context",
     "recall_search_result",
     "event_search_result",
@@ -22,8 +22,42 @@ ArtifactType = Literal[
     "classification_search_result",
     "udi_search_result",
     "registration_search_result",
+    "pma_search_result",
     "aggregated_registrations",
 ]
+
+
+class ColumnConfig(BaseModel):
+    """Configuration for a single table column in dynamic rendering."""
+    key: str = Field(description="Data path (e.g., 'recall_number', 'device.brand_name')")
+    label: str = Field(description="Display label for column header")
+    width: Optional[str] = Field(default=None, description="CSS width (e.g., '100px', '20%')")
+    truncate: Optional[int] = Field(default=None, description="Max characters before truncation")
+    sortable: bool = Field(default=True)
+    formatter: Optional[Literal["date", "number", "tag", "link"]] = Field(
+        default=None, description="Value formatter hint"
+    )
+    tag_color_map: Optional[dict[str, str]] = Field(
+        default=None, description="Map values to Chakra color schemes for tag formatter"
+    )
+
+
+class NestedTableConfig(BaseModel):
+    """Configuration for nested/expandable table rows."""
+    data_key: str = Field(description="Key in parent row containing nested data array")
+    columns: list[ColumnConfig] = Field(description="Column configuration for nested table")
+
+
+class DisplayHints(BaseModel):
+    """Hints for how to render this artifact in the UI."""
+    render_type: Literal["table", "summary_cards", "key_value"] = Field(default="table")
+    title: Optional[str] = Field(default=None, description="Override title for the artifact section")
+    columns: Optional[list[ColumnConfig]] = Field(default=None, description="Table column configuration")
+    summary_fields: Optional[list[str]] = Field(default=None, description="Fields to show in summary cards")
+    default_sort: Optional[str] = Field(default=None, description="Default sort column key")
+    expandable: bool = Field(default=True, description="Whether the section is collapsible")
+    max_rows: int = Field(default=20, description="Max rows to display before 'show more'")
+    nested_table: Optional[NestedTableConfig] = Field(default=None, description="Configuration for expandable nested rows")
 
 
 class DataArtifact(BaseModel):
@@ -32,12 +66,15 @@ class DataArtifact(BaseModel):
     in the agent's session state.
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique ID for this artifact")
-    type: ArtifactType = Field(description="Category of the data artifact (e.g., 'resolved_entities')")
+    type: ArtifactType = Field(description="Category of the data artifact")
     description: str = Field(description="Human-readable summary of the artifact's content")
-    data: Any = Field(description="The actual structured data payload (e.g., ResolvedEntities model)")
+    data: Any = Field(description="The actual structured data payload")
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Timestamp of creation")
     tool_name: str = Field(description="Name of the tool that generated this artifact")
     tool_args: dict = Field(default_factory=dict, description="Arguments passed to the tool")
+    display_hints: Optional[DisplayHints] = Field(default=None, description="UI rendering hints")
+    total_count: Optional[int] = Field(default=None, description="Total records available (for pagination info)")
+    records_returned: Optional[int] = Field(default=None, description="Number of records included in data")
 
     class Config:
-        arbitrary_types_allowed = True # Allow 'data' to be Any type
+        arbitrary_types_allowed = True
