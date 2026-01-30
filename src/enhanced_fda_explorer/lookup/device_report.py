@@ -111,7 +111,11 @@ class DeviceReportGenerator:
             )
             results = data.get("results", [])
             if results:
-                # Get product code from openfda section
+                # Get product code from product_codes array (primary location)
+                product_codes = results[0].get("product_codes", [])
+                if product_codes:
+                    return product_codes[0].get("code")
+                # Fallback to openfda section (less reliable)
                 openfda = results[0].get("openfda", {})
                 codes = openfda.get("product_code", [])
                 if codes:
