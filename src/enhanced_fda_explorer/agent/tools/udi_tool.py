@@ -77,7 +77,7 @@ class SearchUDITool(BaseTool):
         )
 
     def _build_search(self, query: str) -> str:
-        return f'(brand_name:"{query}" OR company_name:"{query}" OR version_or_model_number:"{query}")'
+        return f'(brand_name:"{query}" OR company_name:"{query}" OR version_or_model_number:"{query}" OR identifiers.id:"{query}")'
 
     def _run(self, query: str, limit: int = 50) -> str:
         try:
