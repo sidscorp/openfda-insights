@@ -86,6 +86,17 @@ Turn 3: "Which manufacturers are involved?"
 
 The LangGraph `MemorySaver` checkpointer persists conversation history, and a structured `ResolverContext` stores typed data from resolver tools for downstream use.
 
+### Quick Lookup
+
+For direct device or manufacturer lookups without conversation, use the `/lookup` page. Enter any of:
+
+- **Product codes** (e.g., `FXX`, `LZG`) - direct device report
+- **Device names** (e.g., "surgical mask") - shows matching codes to choose from
+- **K-numbers** (e.g., `K201234`) - device cleared via that 510(k)
+- **Company names** (e.g., "Medtronic") - manufacturer report
+
+Reports include classification, adverse events, recalls, 510(k) clearances, and an AI-generated summary with follow-up question support.
+
 ## Getting Started
 
 ### Prerequisites
@@ -115,15 +126,19 @@ cp .env.example .env
 Edit `.env` with your LLM provider credentials:
 
 ```env
-# Option 1: OpenRouter (recommended for getting started)
+# Option 1: Fireworks (recommended - fast and reliable)
+AI_PROVIDER=fireworks
+FIREWORKS_API_KEY=your_key_here
+
+# Option 2: OpenRouter
 AI_PROVIDER=openrouter
 OPENROUTER_API_KEY=your_key_here
 
-# Option 2: AWS Bedrock
+# Option 3: AWS Bedrock
 AI_PROVIDER=bedrock
 # Configure AWS credentials via aws configure
 
-# Option 3: Local Ollama (no API key needed)
+# Option 4: Local Ollama (no API key needed)
 AI_PROVIDER=ollama
 AI_MODEL=llama3.1
 ```
@@ -192,6 +207,8 @@ python -m src.enhanced_fda_explorer index-gudid                  # download/inde
 
 Start the server with `python -m src.enhanced_fda_explorer serve --port 8001`
 
+### Agent Endpoints
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/health` | GET | Health check (optionally test LLM connectivity) |
@@ -199,6 +216,16 @@ Start the server with `python -m src.enhanced_fda_explorer serve --port 8001`
 | `/api/agent/ask` | POST | Ask the AI agent (blocking) |
 | `/api/agent/stream/{question}` | GET | Stream agent response (SSE) |
 | `/api/agent/providers` | GET | List available LLM providers |
+
+### Lookup Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/lookup/identify` | POST | Identify input type (product code, device name, company, etc.) |
+| `/api/lookup/device/{identifier}` | GET | Get comprehensive device report |
+| `/api/lookup/manufacturer/{identifier}` | GET | Get comprehensive manufacturer report |
+| `/api/lookup/summary` | POST | Generate AI summary of a report |
+| `/api/lookup/followup` | POST | Answer follow-up questions about a report |
 
 Interactive API docs: http://localhost:8001/docs
 
