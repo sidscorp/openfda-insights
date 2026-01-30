@@ -91,7 +91,7 @@ The LangGraph `MemorySaver` checkpointer persists conversation history, and a st
 For direct device or manufacturer lookups without conversation, use the `/lookup` page. Enter any of:
 
 - **Product codes** (e.g., `FXX`, `LZG`) - direct device report
-- **Primary DI** (14-digit device identifier) - specific device lookup
+- **Primary DI** (11+ digit device identifier) - specific device lookup
 - **K-numbers** (e.g., `K201234`) - device cleared via that 510(k)
 - **PMA numbers** (e.g., `P201234`) - device approved via that PMA
 - **Device names** (e.g., "surgical mask") - shows matching codes to choose from

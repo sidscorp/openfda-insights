@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class InputType(Enum):
     """Types of input patterns."""
     PRODUCT_CODE = "product_code"      # 3 letters, e.g., FXX
-    PRIMARY_DI = "primary_di"          # 14 digits
+    PRIMARY_DI = "primary_di"          # 11+ digits (most are 14, range is 8-22+)
     FEI_NUMBER = "fei_number"          # 7-10 digits
     K_NUMBER = "k_number"              # K + 6 digits
     PMA_NUMBER = "pma_number"          # P + 6 digits
@@ -34,9 +34,10 @@ class InputDetector:
     """Detects input type and resolves to entity candidates."""
 
     # Regex patterns for different input types
+    # Note: PRIMARY_DI uses 11+ digits to avoid overlap with FEI_NUMBER (7-10 digits)
     PATTERNS = {
         InputType.PRODUCT_CODE: r"^[A-Za-z]{3}$",
-        InputType.PRIMARY_DI: r"^\d{14}$",
+        InputType.PRIMARY_DI: r"^\d{11,}$",
         InputType.FEI_NUMBER: r"^\d{7,10}$",
         InputType.K_NUMBER: r"^[Kk]\d{6}$",
         InputType.PMA_NUMBER: r"^[Pp]\d{6}$",
